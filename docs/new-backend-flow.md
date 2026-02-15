@@ -13,7 +13,7 @@ bash scripts/create-app.sh <app-slug> <ghcr-image> <internal-port>
 Example:
 
 ```bash
-bash scripts/create-app.sh projekti-a ghcr.io/your-org/projekti-a:latest 3000
+bash scripts/create-app.sh project-a ghcr.io/your-org/project-a:latest 3000
 ```
 
 This creates:

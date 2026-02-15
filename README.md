@@ -1,12 +1,12 @@
 # vps-container-orchestrator
 
-Keskitetty malli yhden VPS-palvelimen backend-deployhin Docker Composella.
+Centralized pattern for deploying backend services on a single VPS with Docker Compose.
 
-- Infrastructure stack ajetaan kerran (Nginx Proxy Manager + Watchtower)
-- Jokainen backend ajetaan omassa `apps/<app-slug>` kansiossa
-- Deploy tapahtuu GitHub Actionsin kautta pushista, Watchtower toimii fallbackina
+- Infrastructure stack is run once (Nginx Proxy Manager + Watchtower)
+- Each backend runs in its own `apps/<app-slug>` directory
+- Deploys happen via GitHub Actions on push, with Watchtower as fallback
 
-## Hakemistorakenne
+## Directory structure
 
 ```text
 deploy-hub/
@@ -31,23 +31,23 @@ deploy-hub/
     └── aws/
 ```
 
-Jaettu Docker-verkko on kiinteasti:
+The shared Docker network is fixed:
 
 - `vps-container-orchestrator`
 
-## Miten deploy toimii (kun lisataan uusi backend)
+## How deploy works (when adding a new backend)
 
-1. Luo appi palvelimelle komennolla `scripts/create-app.sh`.
-2. Lisaa backend-repoon workflow pohjasta `templates/backend-repo/.github/workflows/deploy.yml`.
-3. Push `main` haaraan backend-repossa.
-4. Workflow buildaa imagen ja pushaa sen GHCR:aan (`latest` + `sha`).
-5. Workflow SSH:aa VPS:lle ja ajaa `scripts/server-deploy.sh <app-slug>`.
-6. Palvelin tekee `docker compose pull && docker compose up -d`.
-7. Watchtower paivittaa labeloidut kontit fallbackina intervalilla.
+1. Create the app on the server with `scripts/create-app.sh`.
+2. Add a workflow to the backend repo from `templates/backend-repo/.github/workflows/deploy.yml`.
+3. Push to the `main` branch in the backend repo.
+4. The workflow builds the image and pushes it to GHCR (`latest` + `sha`).
+5. The workflow SSHs to the VPS and runs `scripts/server-deploy.sh <app-slug>`.
+6. The server runs `docker compose pull && docker compose up -d`.
+7. Watchtower updates labeled containers as a fallback on its interval.
 
-## 1) Ensiasennus palvelimelle
+## 1) Initial server setup
 
-Seuraavat komennot ajetaan VPS:lla (esim. `/home/ubuntu/deploy-hub`):
+Run the following commands on the VPS (for example in `/home/ubuntu/deploy-hub`):
 
 ```bash
 git clone <this-repo-url> /home/ubuntu/deploy-hub
@@ -56,57 +56,57 @@ cp infrastructure/.env.example infrastructure/.env
 docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d
 ```
 
-Sitten avaa Nginx Proxy Manager:
+Then open Nginx Proxy Manager:
 
 - `http://<server-ip>:81`
 
-## 2) Uuden backendin lisays palvelimelle
+## 2) Add a new backend on the server
 
 ```bash
 cd /home/ubuntu/deploy-hub
 bash scripts/create-app.sh <app-slug> <ghcr-image> <internal-port>
 ```
 
-Esimerkki:
+Example:
 
 ```bash
-bash scripts/create-app.sh projekti-a ghcr.io/your-org/projekti-a:latest 3000
+bash scripts/create-app.sh project-a ghcr.io/your-org/project-a:latest 3000
 ```
 
-Tama luo:
+This creates:
 
-- `apps/projekti-a/docker-compose.yml`
-- `apps/projekti-a/.env`
+- `apps/project-a/docker-compose.yml`
+- `apps/project-a/.env`
 
-Ensimmainen deploy manuaalisesti:
+First manual deploy:
 
 ```bash
-bash scripts/server-deploy.sh projekti-a
+bash scripts/server-deploy.sh project-a
 ```
 
-## 3) Backend-repon GitHub secrets
+## 3) GitHub secrets in the backend repo
 
-Lisaa backend-repositoryyn ainakin seuraavat secrets:
+Add at least these secrets to the backend repository:
 
-- `SSH_HOST` (VPS IP tai DNS)
-- `SSH_USER` (esim. `ubuntu`)
-- `SSH_PRIVATE_KEY` (private key, jolla VPS:lle kirjaudutaan)
-- `APP_SLUG` (esim. `projekti-a`)
-- `GHCR_READ_TOKEN` (vain jos image on private, scope `read:packages`)
+- `SSH_HOST` (VPS IP or DNS)
+- `SSH_USER` (for example `ubuntu`)
+- `SSH_PRIVATE_KEY` (private key used to log in to the VPS)
+- `APP_SLUG` (for example `project-a`)
+- `GHCR_READ_TOKEN` (only if the image is private, scope `read:packages`)
 
-## 4) Nginx Proxy Manager appille
+## 4) Nginx Proxy Manager for the app
 
-Luo uusi Proxy Host:
+Create a new Proxy Host:
 
-- Domain Names: appin domain
-- Forward Hostname / IP: `APP_NAME` (appin `.env`:sta)
+- Domain Names: app domain
+- Forward Hostname / IP: `APP_NAME` (from the app `.env`)
 - Forward Port: `APP_INTERNAL_PORT`
 
-Ota SSL kayttoon NPM:n UI:ssa.
+Enable SSL in the NPM UI.
 
 ## 5) Terraform (AWS) bootstrap
 
-Jos haluat pystyttaa EC2-instanssin koodilla:
+If you want to provision an EC2 instance with code:
 
 ```bash
 cd terraform/aws
@@ -116,33 +116,33 @@ terraform plan
 terraform apply
 ```
 
-Tarkea:
+Important:
 
-- Rajaa `admin_cidrs` omaan IP-osoitteeseen (SSH 22 ja NPM UI 81)
-- `vpc_id`, `subnet_id` ja `key_name` tulee olla olemassa ennen applyta
+- Restrict `admin_cidrs` to your own IP address (SSH 22 and NPM UI 81)
+- `vpc_id`, `subnet_id`, and `key_name` must exist before apply
 
-Terraform luo:
+Terraform creates:
 
-- EC2 instanssin
-- Security Groupin porteille 22/80/443/81
-- Elastic IP:n
-- User data -asennuksen Dockerille ja Docker Compose pluginille
+- EC2 instance
+- Security Group for ports 22/80/443/81
+- Elastic IP
+- User data setup for Docker and Docker Compose plugin
 
-## Hyodylliset komennot
+## Useful commands
 
-Infra stack ylos:
+Bring infrastructure stack up:
 
 ```bash
 docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d
 ```
 
-Yhden appin deploy:
+Deploy one app:
 
 ```bash
 bash scripts/server-deploy.sh <app-slug>
 ```
 
-Katso kontit:
+List containers:
 
 ```bash
 docker ps
