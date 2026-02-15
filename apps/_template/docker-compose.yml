@@ -1,0 +1,16 @@
+services:
+  backend:
+    image: ${APP_IMAGE}
+    container_name: ${APP_NAME}
+    restart: unless-stopped
+    expose:
+      - "${APP_INTERNAL_PORT}"
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    networks:
+      - shared-network
+
+networks:
+  shared-network:
+    external: true
+    name: vps-container-orchestrator

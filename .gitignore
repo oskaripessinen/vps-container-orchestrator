@@ -1,0 +1,9 @@
+**/.env
+!**/.env.example
+
+infrastructure/data/
+infrastructure/letsencrypt/
+
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
