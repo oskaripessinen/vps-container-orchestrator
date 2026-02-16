@@ -45,7 +45,7 @@ jobs:
           SSM_PARAMETERS="$(cat <<'JSON'
           {
             "commands": [
-              "set -euo pipefail",
+              "set -eu",
               "if [ -d /home/ubuntu/deploy-hub ]; then DEPLOY_DIR=/home/ubuntu/deploy-hub; DEPLOY_USER=ubuntu; elif [ -d /home/ec2-user/deploy-hub ]; then DEPLOY_DIR=/home/ec2-user/deploy-hub; DEPLOY_USER=ec2-user; else echo Missing deploy-hub directory under /home/ubuntu or /home/ec2-user; exit 1; fi",
               "if [ ! -d \"$DEPLOY_DIR/.git\" ]; then echo Missing git repo at $DEPLOY_DIR; exit 1; fi",
               "su - \"$DEPLOY_USER\" -c \"cd \\\"$DEPLOY_DIR\\\" && git fetch origin main && git checkout main && git pull --ff-only origin main\"",
