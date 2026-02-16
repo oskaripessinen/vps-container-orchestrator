@@ -21,34 +21,67 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
     steps:
-      - name: Deploy to EC2 over SSH
-        uses: appleboy/ssh-action@v1.2.2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script_stop: true
-          script: |
-            set -euo pipefail
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-            DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/deploy-hub"
+      - name: Deploy through AWS SSM
+        shell: bash
+        run: |
+          set -euo pipefail
 
-            if [ ! -d "$DEPLOY_DIR/.git" ]; then
-              printf 'Missing git repo at %s\n' "$DEPLOY_DIR"
-              exit 1
-            fi
+          if [ -z "$AWS_REGION" ] || [ -z "$EC2_INSTANCE_ID" ]; then
+            printf 'Missing AWS_REGION or EC2_INSTANCE_ID secret.\n'
+            exit 1
+          fi
 
-            cd "$DEPLOY_DIR"
-            git fetch origin main
-            git checkout main
-            git pull --ff-only origin main
+          COMMAND_ID="$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy orchestrator from GitHub Actions" \
+            --timeout-seconds 1800 \
+            --parameters '{"commands":["set -euo pipefail","if [ -d /home/ubuntu/deploy-hub ]; then DEPLOY_DIR=/home/ubuntu/deploy-hub; elif [ -d /home/ec2-user/deploy-hub ]; then DEPLOY_DIR=/home/ec2-user/deploy-hub; else echo Missing deploy-hub directory under /home/ubuntu or /home/ec2-user; exit 1; fi","if [ ! -d \"$DEPLOY_DIR/.git\" ]; then echo Missing git repo at $DEPLOY_DIR; exit 1; fi","cd \"$DEPLOY_DIR\"","git fetch origin main","git checkout main","git pull --ff-only origin main","if [ ! -f infrastructure/.env ]; then echo Missing infrastructure/.env. Create it from infrastructure/.env.example first.; exit 1; fi","docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env config >/dev/null","docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d","docker image prune -f"]}' \
+            --query 'Command.CommandId' \
+            --output text)"
 
-            if [ ! -f infrastructure/.env ]; then
-              printf 'Missing infrastructure/.env. Create it from infrastructure/.env.example first.\n'
-              exit 1
-            fi
+          printf 'Started SSM command: %s\n' "$COMMAND_ID"
 
-            docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env config >/dev/null
-            docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d
-            docker image prune -f
+          aws ssm wait command-executed \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" || true
+
+          STATUS="$(aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query 'Status' \
+            --output text)"
+
+          printf 'SSM command status: %s\n' "$STATUS"
+          printf '---- SSM stdout ----\n'
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query 'StandardOutputContent' \
+            --output text || true
+          printf '---- SSM stderr ----\n'
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query 'StandardErrorContent' \
+            --output text || true
+
+          if [ "$STATUS" != "Success" ]; then
+            exit 1
+          fi
