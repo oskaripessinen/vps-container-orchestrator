@@ -1,0 +1,54 @@
+name: Deploy Orchestrator
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - infrastructure/**
+      - scripts/**
+      - apps/_template/**
+      - .github/workflows/deploy-orchestrator.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orchestrator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to EC2 over SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            DEPLOY_DIR="/home/${{ secrets.SSH_USER }}/deploy-hub"
+
+            if [ ! -d "$DEPLOY_DIR/.git" ]; then
+              printf 'Missing git repo at %s\n' "$DEPLOY_DIR"
+              exit 1
+            fi
+
+            cd "$DEPLOY_DIR"
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+
+            if [ ! -f infrastructure/.env ]; then
+              printf 'Missing infrastructure/.env. Create it from infrastructure/.env.example first.\n'
+              exit 1
+            fi
+
+            docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env config >/dev/null
+            docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d
+            docker image prune -f
