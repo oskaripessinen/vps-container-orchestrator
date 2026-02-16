@@ -42,13 +42,29 @@ jobs:
             exit 1
           fi
 
+          SSM_PARAMETERS="$(cat <<'JSON'
+          {
+            "commands": [
+              "set -euo pipefail",
+              "if [ -d /home/ubuntu/deploy-hub ]; then DEPLOY_DIR=/home/ubuntu/deploy-hub; DEPLOY_USER=ubuntu; elif [ -d /home/ec2-user/deploy-hub ]; then DEPLOY_DIR=/home/ec2-user/deploy-hub; DEPLOY_USER=ec2-user; else echo Missing deploy-hub directory under /home/ubuntu or /home/ec2-user; exit 1; fi",
+              "if [ ! -d \"$DEPLOY_DIR/.git\" ]; then echo Missing git repo at $DEPLOY_DIR; exit 1; fi",
+              "su - \"$DEPLOY_USER\" -c \"cd \\\"$DEPLOY_DIR\\\" && git fetch origin main && git checkout main && git pull --ff-only origin main\"",
+              "if [ ! -f \"$DEPLOY_DIR/infrastructure/.env\" ]; then echo Missing infrastructure/.env. Create it from infrastructure/.env.example first.; exit 1; fi",
+              "docker compose -f \"$DEPLOY_DIR/infrastructure/docker-compose.yml\" --env-file \"$DEPLOY_DIR/infrastructure/.env\" config >/dev/null",
+              "docker compose -f \"$DEPLOY_DIR/infrastructure/docker-compose.yml\" --env-file \"$DEPLOY_DIR/infrastructure/.env\" up -d",
+              "docker image prune -f"
+            ]
+          }
+          JSON
+          )"
+
           COMMAND_ID="$(aws ssm send-command \
             --region "$AWS_REGION" \
             --instance-ids "$EC2_INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy orchestrator from GitHub Actions" \
             --timeout-seconds 1800 \
-            --parameters '{"commands":["set -euo pipefail","if [ -d /home/ubuntu/deploy-hub ]; then DEPLOY_DIR=/home/ubuntu/deploy-hub; elif [ -d /home/ec2-user/deploy-hub ]; then DEPLOY_DIR=/home/ec2-user/deploy-hub; else echo Missing deploy-hub directory under /home/ubuntu or /home/ec2-user; exit 1; fi","if [ ! -d \"$DEPLOY_DIR/.git\" ]; then echo Missing git repo at $DEPLOY_DIR; exit 1; fi","cd \"$DEPLOY_DIR\"","git fetch origin main","git checkout main","git pull --ff-only origin main","if [ ! -f infrastructure/.env ]; then echo Missing infrastructure/.env. Create it from infrastructure/.env.example first.; exit 1; fi","docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env config >/dev/null","docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d","docker image prune -f"]}' \
+            --parameters "$SSM_PARAMETERS" \
             --query 'Command.CommandId' \
             --output text)"
 
@@ -67,14 +83,14 @@ jobs:
             --output text)"
 
           printf 'SSM command status: %s\n' "$STATUS"
-          printf '---- SSM stdout ----\n'
+          printf '%s\n' '---- SSM stdout ----'
           aws ssm get-command-invocation \
             --region "$AWS_REGION" \
             --command-id "$COMMAND_ID" \
             --instance-id "$EC2_INSTANCE_ID" \
             --query 'StandardOutputContent' \
             --output text || true
-          printf '---- SSM stderr ----\n'
+          printf '%s\n' '---- SSM stderr ----'
           aws ssm get-command-invocation \
             --region "$AWS_REGION" \
             --command-id "$COMMAND_ID" \
