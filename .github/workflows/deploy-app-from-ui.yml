@@ -1,0 +1,189 @@
+name: Build And Deploy App From UI
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_slug:
+        description: "App slug (apps/<app-slug>)"
+        required: true
+        type: string
+      source_owner:
+        description: "GitHub repo owner"
+        required: true
+        type: string
+      source_repo:
+        description: "GitHub repo name"
+        required: true
+        type: string
+      source_ref:
+        description: "Git ref (branch/tag/sha)"
+        required: true
+        type: string
+      internal_port:
+        description: "App internal container port"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-app-${{ inputs.app_slug }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+      APP_SLUG: ${{ inputs.app_slug }}
+      SOURCE_OWNER: ${{ inputs.source_owner }}
+      SOURCE_REPO: ${{ inputs.source_repo }}
+      SOURCE_REF: ${{ inputs.source_ref }}
+      INTERNAL_PORT: ${{ inputs.internal_port }}
+    steps:
+      - name: Validate workflow inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$APP_SLUG" =~ ^[a-z0-9-]+$ ]]; then
+            printf 'Invalid app slug: %s\n' "$APP_SLUG"
+            exit 1
+          fi
+
+          if [[ ! "$SOURCE_OWNER" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            printf 'Invalid source owner: %s\n' "$SOURCE_OWNER"
+            exit 1
+          fi
+
+          if [[ ! "$SOURCE_REPO" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            printf 'Invalid source repo: %s\n' "$SOURCE_REPO"
+            exit 1
+          fi
+
+          if [[ -z "$SOURCE_REF" ]]; then
+            printf 'Source ref is required\n'
+            exit 1
+          fi
+
+          if [[ ! "$INTERNAL_PORT" =~ ^[0-9]+$ ]] || [ "$INTERNAL_PORT" -lt 1 ] || [ "$INTERNAL_PORT" -gt 65535 ]; then
+            printf 'Invalid internal port: %s\n' "$INTERNAL_PORT"
+            exit 1
+          fi
+
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_OWNER }}/${{ env.SOURCE_REPO }}
+          ref: ${{ env.SOURCE_REF }}
+          token: ${{ secrets.DEPLOY_GITHUB_TOKEN }}
+          path: source-repo
+
+      - name: Prepare image name
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_REPO="${SOURCE_OWNER}-${SOURCE_REPO}"
+          IMAGE_REPO="$(printf '%s' "$IMAGE_REPO" | tr '[:upper:]' '[:lower:]' | tr '._' '--')"
+          IMAGE_TAG="deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          APP_IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER}/${IMAGE_REPO}:${IMAGE_TAG}"
+
+          printf 'APP_IMAGE=%s\n' "$APP_IMAGE" >> "$GITHUB_ENV"
+          printf 'Building image: %s\n' "$APP_IMAGE"
+
+      - name: Log in to GHCR
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "source-repo/Dockerfile" ]; then
+            printf 'Missing Dockerfile at source-repo/Dockerfile\n'
+            exit 1
+          fi
+
+          docker build -f source-repo/Dockerfile -t "$APP_IMAGE" source-repo
+          docker push "$APP_IMAGE"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy app through AWS SSM
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "$AWS_REGION" ] || [ -z "$EC2_INSTANCE_ID" ]; then
+            printf 'Missing AWS_REGION or EC2_INSTANCE_ID secret.\n'
+            exit 1
+          fi
+
+          SSM_PARAMETERS="$(cat <<JSON
+          {
+            "commands": [
+              "set -eu",
+              "if [ -d /home/ubuntu/deploy-hub ]; then DEPLOY_DIR=/home/ubuntu/deploy-hub; DEPLOY_USER=ubuntu; elif [ -d /home/ec2-user/deploy-hub ]; then DEPLOY_DIR=/home/ec2-user/deploy-hub; DEPLOY_USER=ec2-user; else echo Missing deploy-hub directory under /home/ubuntu or /home/ec2-user; exit 1; fi",
+              "if [ ! -d \\\"$DEPLOY_DIR/.git\\\" ]; then echo Missing git repo at $DEPLOY_DIR; exit 1; fi",
+              "su - \\\"$DEPLOY_USER\\\" -c \\\"cd \\\\\\\"$DEPLOY_DIR\\\\\\\" && git fetch origin main && git checkout main && git pull --ff-only origin main\\\"",
+              "su - \\\"$DEPLOY_USER\\\" -c \\\"bash \\\\\\\"$DEPLOY_DIR/scripts/deploy-app-from-image.sh\\\\\\\" '$APP_SLUG' '$APP_IMAGE' '$INTERNAL_PORT'\\\""
+            ]
+          }
+          JSON
+          )"
+
+          COMMAND_ID="$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Build and deploy app ${APP_SLUG} from ${SOURCE_OWNER}/${SOURCE_REPO}@${SOURCE_REF}" \
+            --timeout-seconds 1800 \
+            --parameters "$SSM_PARAMETERS" \
+            --query 'Command.CommandId' \
+            --output text)"
+
+          printf 'Started SSM command: %s\n' "$COMMAND_ID"
+
+          aws ssm wait command-executed \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" || true
+
+          STATUS="$(aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query 'Status' \
+            --output text)"
+
+          printf 'SSM command status: %s\n' "$STATUS"
+          printf '%s\n' '---- SSM stdout ----'
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query 'StandardOutputContent' \
+            --output text || true
+          printf '%s\n' '---- SSM stderr ----'
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query 'StandardErrorContent' \
+            --output text || true
+
+          if [ "$STATUS" != "Success" ]; then
+            exit 1
+          fi

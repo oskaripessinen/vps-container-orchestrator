@@ -5,6 +5,7 @@ Centralized pattern for deploying backend services on a single VPS with Docker C
 - Infrastructure stack is run once (Nginx Proxy Manager + Watchtower)
 - Each backend runs in its own `apps/<app-slug>` directory
 - Deploys happen via GitHub Actions on push, with Watchtower as fallback
+- Optional `control-panel/` Next.js UI can trigger build+deploy from selected Git repositories
 
 ## Directory structure
 
@@ -25,11 +26,23 @@ deploy-hub/
 │   └── server-deploy.sh
 ├── templates/
 │   └── backend-repo/.github/workflows/deploy.yml
+├── control-panel/
+│   ├── src/
+│   ├── .env.example
+│   └── README.md
 ├── docs/
 │   └── new-backend-flow.md
 └── terraform/
     └── aws/
 ```
+
+## Control panel (optional)
+
+The `control-panel/` app provides a web UI for authenticated users to import a repository,
+build an image, and dispatch deploy workflow `deploy-app-from-ui.yml`.
+
+- Start from `control-panel/README.md` for setup and required environment variables.
+- End users do not provide deploy tokens; one server-side deploy credential is configured in control-panel env.
 
 The shared Docker network is fixed:
 

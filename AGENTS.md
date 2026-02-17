@@ -15,6 +15,7 @@ This repository is infrastructure-first: Bash scripts, Docker Compose, and Terra
 - `apps/_template/docker-compose.yml`: baseline app service definition.
 - `infrastructure/docker-compose.yml`: Nginx Proxy Manager + Watchtower.
 - `terraform/aws/*.tf`: EC2, SG, EIP, variables, outputs.
+- `control-panel/`: Next.js + shadcn admin UI for GHCR listing and deploy dispatch.
 - `templates/backend-repo/.github/workflows/deploy.yml`: backend CI deploy template.
 - `docs/new-backend-flow.md`: deployment flow reference.
 
@@ -22,6 +23,7 @@ This repository is infrastructure-first: Bash scripts, Docker Compose, and Terra
 - Bash (`#!/usr/bin/env bash`).
 - Docker with Compose v2 plugin (`docker compose`).
 - Terraform >= `1.6.0` with AWS provider `~> 5.0`.
+- Node.js 20+ and npm for `control-panel/`.
 - Recommended local tools: `shellcheck`, `shfmt`.
 
 ## Build, lint, test, and validation commands
@@ -54,12 +56,21 @@ Run these commands from `terraform/aws`.
 - Plan infra changes: `terraform plan`
 - Apply infra changes: `terraform apply`
 
+### Control panel (`control-panel`)
+Run these commands from `control-panel`.
+- Install dependencies: `npm install`
+- Dev server: `npm run dev`
+- Lint: `npm run lint`
+- Build (type + production checks): `npm run build`
+- Start production build: `npm run start`
+
 ### Test strategy status
 - There is no dedicated unit/integration test suite in this repository today.
 - Use these checks as merge gates:
   - `shellcheck` and `bash -n` for script changes
   - `docker compose ... config` for Compose changes
   - `terraform fmt -check` and `terraform validate` (plus `terraform plan` for infra updates)
+  - `npm run lint` and `npm run build` for `control-panel` changes
 
 ### Change validation matrix
 - If you change only `scripts/create-app.sh`:
@@ -76,6 +87,9 @@ Run these commands from `terraform/aws`.
   - `terraform fmt -check -recursive`
   - `terraform validate`
   - `terraform plan` when behavior changes
+- If you change `control-panel/**`:
+  - `npm run lint`
+  - `npm run build`
 
 ### Deploy workflow invariants
 - Deploys target one app slug at a time via `bash scripts/server-deploy.sh <app-slug>`.
@@ -122,11 +136,12 @@ Run these commands from `terraform/aws`.
 - Terraform identifiers: snake_case.
 - Script files: kebab-case with action verbs (`create-app.sh`, `server-deploy.sh`).
 
-### Imports, formatting, and types (future runtime code)
-- This repo currently has no Python/Node/Go app modules.
-- If runtime code is added, group imports as: standard library, third-party, local.
-- Use project-standard formatter/linter for that language and commit config files.
-- Prefer explicit typing when language/tooling supports it.
+### TypeScript/Next.js style (`control-panel`)
+- Prefer TypeScript with strict typing; avoid `any` except for unavoidable third-party gaps.
+- Keep imports grouped as framework/third-party first, local aliases (`@/...`) second.
+- Keep React components small and composed; prefer server components unless client state is needed.
+- Keep API route validation explicit (for example with `zod`) and return structured errors.
+- Use `npm run lint` and `npm run build` before merge.
 
 ### Error handling expectations
 - Fail fast on invalid args, missing files, and failed external commands.
