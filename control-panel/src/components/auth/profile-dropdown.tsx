@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 function initialsFromName(name: string) {
   return name
@@ -22,7 +23,13 @@ function initialsFromName(name: string) {
     .join("");
 }
 
-export function ProfileDropdown({ afterSignOutUrl }: { afterSignOutUrl: string }) {
+export function ProfileDropdown({
+  afterSignOutUrl,
+  menuClassName,
+}: {
+  afterSignOutUrl: string;
+  menuClassName?: string;
+}) {
   const { user, isLoaded } = useUser();
   const clerk = useClerk();
 
@@ -56,7 +63,7 @@ export function ProfileDropdown({ afterSignOutUrl }: { afterSignOutUrl: string }
           </Avatar>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent align="end" className={cn("w-64", menuClassName)}>
         <div className="px-2.5 py-2.5">
           <p className="truncate text-sm font-semibold text-card-foreground">{displayName}</p>
           <p className="truncate text-xs text-muted-foreground">{secondaryText}</p>

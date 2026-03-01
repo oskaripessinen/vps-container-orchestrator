@@ -25,7 +25,10 @@ export async function GET() {
   }
 
   try {
-    const repos = await listAccessibleRepos(authenticatedUser.githubAccessToken);
+    const repos = await listAccessibleRepos(
+      authenticatedUser.githubLogin,
+      authenticatedUser.githubAccessToken
+    );
 
     return NextResponse.json({
       githubLogin: authenticatedUser.githubLogin,

@@ -49,10 +49,8 @@ export function GitHubAuthModal({
       <DialogContent className="max-w-[420px] overflow-hidden">
         <div className="pointer-events-none absolute inset-0 bg-linear-to-b from-white/5 to-transparent" />
         <DialogHeader className="relative">
-          <DialogTitle>Sign in to Orchestrator Console</DialogTitle>
-          <DialogDescription>
-            Authenticate with your GitHub account to access deployments.
-          </DialogDescription>
+          <DialogTitle>Sign in</DialogTitle>
+          <DialogDescription>Use GitHub to continue.</DialogDescription>
         </DialogHeader>
         <div className="relative space-y-4">
           <Button
@@ -64,7 +62,7 @@ export function GitHubAuthModal({
             disabled={!isLoaded || isSubmitting}
           >
             <Github className="h-4 w-4" />
-            {isSubmitting ? "Redirecting..." : "Continue With GitHub"}
+            {isSubmitting ? "Redirecting..." : "Continue with GitHub"}
           </Button>
 
           <div
@@ -76,7 +74,7 @@ export function GitHubAuthModal({
 
           <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
             <ShieldCheck className="h-3.5 w-3.5" />
-            OAuth session handled by Clerk
+            GitHub auth via Clerk
           </p>
         </div>
       </DialogContent>

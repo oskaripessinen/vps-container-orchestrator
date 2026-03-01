@@ -25,7 +25,7 @@ export function GitHubAuthPanel() {
   };
 
   return (
-    <section className="relative w-full max-w-[420px] overflow-hidden rounded-xl border border-border/80 bg-card px-6 py-5 shadow-[0_30px_80px_-45px_rgba(0,0,0,0.95)]">
+    <section className="animate-fade-up relative w-full max-w-[420px] overflow-hidden rounded-lg border border-border/80 bg-card px-6 py-5 shadow-[0_24px_60px_-48px_rgba(0,0,0,0.92)]">
       <div className="pointer-events-none absolute inset-0 bg-linear-to-b from-white/5 to-transparent" />
       <Button
         type="button"
@@ -40,12 +40,8 @@ export function GitHubAuthPanel() {
 
       <div className="relative space-y-4">
         <div className="space-y-1">
-          <h1 className="text-3xl font-semibold tracking-tight text-card-foreground">
-            Sign in to Orchestrator Console
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Authenticate with your GitHub account to access deployments.
-          </p>
+          <h1 className="text-3xl font-semibold tracking-tight text-card-foreground">Sign in</h1>
+          <p className="text-sm text-muted-foreground">Use GitHub to continue.</p>
         </div>
 
         <Button
@@ -57,7 +53,7 @@ export function GitHubAuthPanel() {
           disabled={!isLoaded || isSubmitting}
         >
           <Github className="h-4 w-4" />
-          {isSubmitting ? "Redirecting..." : "Continue With GitHub"}
+          {isSubmitting ? "Redirecting..." : "Continue with GitHub"}
         </Button>
 
         <div
@@ -69,7 +65,7 @@ export function GitHubAuthPanel() {
 
         <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
           <ShieldCheck className="h-3.5 w-3.5" />
-          OAuth session handled by Clerk
+          GitHub auth via Clerk
         </p>
       </div>
     </section>

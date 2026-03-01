@@ -2,14 +2,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  ChevronRight,
+  Activity,
+  EllipsisVertical,
+  FolderGit2,
   GitBranch,
   Github,
   Lock,
+  Rocket,
   Search,
 } from "lucide-react";
 
+import { ProfileDropdown } from "@/components/auth/profile-dropdown";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -22,22 +27,37 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 type SourceRepo = {
   name: string;
-  owner: string;
   fullName: string;
   private: boolean;
   visibility: string;
@@ -50,6 +70,38 @@ type DeployFeedback = {
   title: string;
   detail: string;
 };
+
+type VpsStatus = {
+  hostname: string;
+  uptimeSeconds: number;
+  loadAverage1m: number;
+  memory: {
+    usedPercent: number;
+    usedGb: number;
+    totalGb: number;
+  };
+};
+
+const NAV_ITEMS = [
+  {
+    key: "repositories",
+    label: "Repositories",
+    icon: FolderGit2,
+    disabled: false,
+  },
+  {
+    key: "deployments",
+    label: "Deployments",
+    icon: Rocket,
+    disabled: true,
+  },
+  {
+    key: "activity",
+    label: "Activity",
+    icon: Activity,
+    disabled: true,
+  },
+] as const;
 
 function slugifyRepoName(name: string) {
   return name
@@ -95,21 +147,41 @@ function formatRepoDate(value: string | null) {
   }).format(date);
 }
 
+function formatUptime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "0m";
+  }
+
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+
+  if (days > 0) {
+    return `${days}d ${hours}h`;
+  }
+
+  if (hours > 0) {
+    return `${hours}h ${mins}m`;
+  }
+
+  return `${Math.max(1, mins)}m`;
+}
+
 export function DashboardClient() {
   const [repos, setRepos] = useState<SourceRepo[]>([]);
   const [githubLogin, setGithubLogin] = useState<string>("github-user");
   const [isLoadingRepos, setIsLoadingRepos] = useState(true);
-  const [selectedOwner, setSelectedOwner] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [isImportingRepo, setIsImportingRepo] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<DeployFeedback | null>(null);
+  const [vpsStatus, setVpsStatus] = useState<VpsStatus | null>(null);
+  const [isLoadingVpsStatus, setIsLoadingVpsStatus] = useState(true);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [dialogRepo, setDialogRepo] = useState<SourceRepo | null>(null);
   const [projectName, setProjectName] = useState("");
   const [sourceRef, setSourceRef] = useState("main");
   const [internalPort, setInternalPort] = useState("3000");
-  const [team, setTeam] = useState("personal");
 
   useEffect(() => {
     const loadRepos = async () => {
@@ -141,23 +213,35 @@ export function DashboardClient() {
       }
     };
 
-    void loadRepos();
-  }, []);
+    const loadVpsStatus = async () => {
+      setIsLoadingVpsStatus(true);
 
-  const owners = useMemo(() => {
-    return [...new Set(repos.map((repo) => repo.owner))].sort((a, b) =>
-      a.localeCompare(b)
-    );
-  }, [repos]);
+      try {
+        const response = await fetch("/api/vps/status", { cache: "no-store" });
+        const data = (await response.json()) as VpsStatus & {
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to load VPS status");
+        }
+
+        setVpsStatus(data);
+      } catch {
+        setVpsStatus(null);
+      } finally {
+        setIsLoadingVpsStatus(false);
+      }
+    };
+
+    void loadRepos();
+    void loadVpsStatus();
+  }, []);
 
   const filteredRepos = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
 
     return repos.filter((repo) => {
-      if (selectedOwner !== "all" && repo.owner !== selectedOwner) {
-        return false;
-      }
-
       if (!query) {
         return true;
       }
@@ -167,14 +251,15 @@ export function DashboardClient() {
         repo.fullName.toLowerCase().includes(query)
       );
     });
-  }, [repos, searchTerm, selectedOwner]);
+  }, [repos, searchTerm]);
+
+  const slugPreview = slugifyRepoName(projectName || dialogRepo?.name || "");
 
   const openImportDialog = (repo: SourceRepo) => {
     setDialogRepo(repo);
     setProjectName(repo.name);
     setSourceRef(repo.defaultBranch || "main");
     setInternalPort("3000");
-    setTeam("personal");
     setIsDialogOpen(true);
   };
 
@@ -215,7 +300,6 @@ export function DashboardClient() {
         body: JSON.stringify({
           appSlug: slug,
           internalPort: port,
-          sourceOwner: dialogRepo.owner,
           sourceRepo: dialogRepo.name,
           sourceRef,
         }),
@@ -253,196 +337,324 @@ export function DashboardClient() {
 
   return (
     <>
-      <main className="flex h-[calc(100vh-65px)] items-stretch justify-center p-4">
-        <Card className="flex h-full w-full max-w-4xl flex-col border-border/80 bg-card/95 backdrop-blur-xl">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-3xl font-semibold tracking-tight">
-              Import Git Repository
-            </CardTitle>
-            <CardDescription>
-              Pick a repository and import it to build and deploy automatically.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-4">
-            {feedback && (
-              <Alert variant={feedback.status === "error" ? "destructive" : "default"}>
-                <AlertTitle>{feedback.title}</AlertTitle>
-                <AlertDescription className="break-all">{feedback.detail}</AlertDescription>
-              </Alert>
-            )}
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <Select value={selectedOwner} onValueChange={setSelectedOwner}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select owner" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All owners</SelectItem>
-                  {owners.map((owner) => (
-                    <SelectItem key={owner} value={owner}>
-                      {owner}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <div className="relative">
-                <Search className="pointer-events-none absolute top-2.5 left-3 h-4 w-4 text-muted-foreground" />
-                <Input
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder="Search repositories..."
-                  className="pl-9"
-                />
+      <div className="relative h-[100dvh] overflow-hidden">
+        <SidebarProvider defaultOpen className="relative h-full">
+          <Sidebar className="sticky top-0 self-start">
+            <SidebarHeader className="flex h-14 items-center pl-4 pr-2">
+              <div className="mt-2 flex w-full items-center gap-3">
+                <ProfileDropdown afterSignOutUrl="/login" menuClassName="w-72" />
+                <div className="min-w-0 flex-1 group-data-[state=collapsed]/sidebar:hidden">
+                  <p className="truncate text-sm font-semibold text-sidebar-foreground">{githubLogin}</p>
+                </div>
               </div>
-            </div>
+            </SidebarHeader>
 
-            <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto rounded-lg border border-border/80">
-              {isLoadingRepos ? (
-                <div className="px-4 py-6 text-sm text-muted-foreground">
-                  Loading repositories...
-                </div>
-              ) : filteredRepos.length === 0 ? (
-                <div className="space-y-1 px-4 py-6 text-sm text-muted-foreground">
-                  <p>No repositories found.</p>
-                  <p className="text-xs">
-                    Ensure GitHub OAuth scopes include `repo` and `read:org`, then sign
-                    out and sign in again.
-                  </p>
-                </div>
-              ) : (
-                filteredRepos.map((repo) => (
-                  <div
-                    key={repo.fullName}
-                    className="flex items-center justify-between border-b border-border/80 px-4 py-4 last:border-b-0"
-                  >
-                    <div className="min-w-0 pr-4">
-                      <p className="truncate text-xl font-medium text-card-foreground">
-                        {repo.name}
-                        {repo.private ? (
-                          <Lock className="ml-2 inline h-4 w-4 text-muted-foreground" />
-                        ) : null}
-                        <span className="ml-2 text-sm font-normal text-muted-foreground">
-                          {formatRepoDate(repo.pushedAt)}
-                        </span>
-                      </p>
-                      <p className="truncate text-[11px] text-muted-foreground">
-                        {repo.fullName}
-                      </p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      className="h-10 px-5"
-                      disabled={isImportingRepo === repo.fullName}
-                      onClick={() => openImportDialog(repo)}
-                    >
-                      {isImportingRepo === repo.fullName ? "Importing..." : "Import"}
-                    </Button>
+            <SidebarContent className="no-scrollbar px-3 py-4">
+              <SidebarGroup className="animate-slide-in">
+                <SidebarGroupLabel className="group-data-[state=collapsed]/sidebar:hidden">
+                  Workspace
+                </SidebarGroupLabel>
+                <SidebarMenu>
+                  {NAV_ITEMS.map((item) => {
+                    const Icon = item.icon;
+
+                    return (
+                      <SidebarMenuItem key={item.key}>
+                        <SidebarMenuButton
+                          type="button"
+                          size="lg"
+                          isActive={!item.disabled}
+                          disabled={item.disabled}
+                          className={cn(
+                            "h-11",
+                            item.disabled && "cursor-not-allowed opacity-55"
+                          )}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          <span className="flex min-w-0 flex-col items-start leading-tight group-data-[state=collapsed]/sidebar:hidden">
+                            <span>{item.label}</span>
+                          </span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </SidebarGroup>
+            </SidebarContent>
+
+            <SidebarFooter className="border-t border-sidebar-border/80 p-4 group-data-[state=collapsed]/sidebar:hidden">
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <Card className="gap-1 border-sidebar-border/70 bg-sidebar-accent/50 py-2 shadow-none">
+                  <CardContent className="px-2">
+                    <p className="text-muted-foreground">Uptime</p>
+                    <p className="mt-1 text-sm font-semibold text-sidebar-foreground">
+                      {isLoadingVpsStatus
+                        ? "..."
+                        : vpsStatus
+                          ? formatUptime(vpsStatus.uptimeSeconds)
+                          : "n/a"}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card className="gap-1 border-sidebar-border/70 bg-sidebar-accent/50 py-2 shadow-none">
+                  <CardContent className="px-2">
+                    <p className="text-muted-foreground">Load / Mem</p>
+                    <p className="mt-1 text-sm font-semibold text-sidebar-foreground">
+                      {isLoadingVpsStatus
+                        ? "..."
+                        : vpsStatus
+                          ? `${vpsStatus.loadAverage1m.toFixed(2)} / ${vpsStatus.memory.usedPercent}%`
+                          : "n/a"}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            </SidebarFooter>
+          </Sidebar>
+
+          <SidebarInset className="flex h-full min-h-0 flex-col overflow-hidden">
+            <header className="sticky top-0 z-40 shrink-0 border-b border-border/80 bg-background/90 backdrop-blur-xl">
+              <div className="relative flex h-14 items-center px-3">
+                <SidebarTrigger className="shrink-0" />
+                <p className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-sm font-semibold text-foreground">
+                  Deploy
+                </p>
+                <Button type="button" variant="ghost" size="icon-sm" className="ml-auto text-muted-foreground">
+                  <EllipsisVertical className="h-4 w-4" />
+                  <span className="sr-only">Settings</span>
+                </Button>
+              </div>
+            </header>
+
+            <main className="flex min-h-0 w-full flex-1 flex-col gap-4 overflow-hidden px-4 py-6 sm:px-6 lg:px-8">
+              <Card className="animate-fade-up gap-0 border-border/80 bg-background/60 py-0">
+                <CardHeader className="flex flex-col gap-4 py-4 sm:py-5 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="max-w-2xl space-y-1">
+                    <CardTitle className="text-lg tracking-tight sm:text-xl">Deploy</CardTitle>
+                    <CardDescription>
+                      Import a GitHub repository and queue a new deployment workflow.
+                    </CardDescription>
                   </div>
-                ))
+
+                  <div className="w-full lg:max-w-2xl">
+                    <Label htmlFor="repo-search" className="sr-only">
+                      Search repositories
+                    </Label>
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute top-2.5 left-3 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="repo-search"
+                        value={searchTerm}
+                        onChange={(event) => setSearchTerm(event.target.value)}
+                        placeholder="Search by repository name"
+                        className="pl-9"
+                      />
+                    </div>
+                  </div>
+                </CardHeader>
+              </Card>
+
+              {feedback && (
+                <Alert
+                  className="animate-fade-up animation-delay-100"
+                  variant={feedback.status === "error" ? "destructive" : "default"}
+                >
+                  <AlertTitle>{feedback.title}</AlertTitle>
+                  <AlertDescription className="break-all">{feedback.detail}</AlertDescription>
+                </Alert>
               )}
-            </div>
-          </CardContent>
-        </Card>
-      </main>
+
+              <Card className="animate-fade-up animation-delay-150 min-h-0 flex-1 gap-0 overflow-hidden border-border/80 bg-background/60 py-0">
+                <CardContent className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-0 py-0">
+                  <Table className="table-fixed">
+                    <colgroup>
+                      <col className="w-[52%]" />
+                      <col className="w-[18%]" />
+                      <col className="w-[18%]" />
+                      <col className="w-[12%]" />
+                    </colgroup>
+                    <TableBody>
+                      {isLoadingRepos ? (
+                        <TableRow>
+                          <TableCell
+                            colSpan={4}
+                            className="px-6 py-8 text-center text-sm text-muted-foreground"
+                          >
+                            Loading repositories...
+                          </TableCell>
+                        </TableRow>
+                      ) : filteredRepos.length === 0 ? (
+                        <TableRow>
+                          <TableCell
+                            colSpan={4}
+                            className="space-y-2 px-6 py-8 text-center text-sm text-muted-foreground whitespace-normal"
+                          >
+                            <p>No repositories found.</p>
+                            <p className="text-xs">
+                              Ensure GitHub OAuth scopes include `repo`, then sign out and sign
+                              in again.
+                            </p>
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        filteredRepos.map((repo, index) => (
+                          <TableRow
+                            key={repo.fullName}
+                            className="animate-fade-up"
+                            style={{ animationDelay: `${Math.min(index, 10) * 35}ms` }}
+                          >
+                            <TableCell className="min-w-0 max-w-0 px-6 py-3 whitespace-normal">
+                              <div className="min-w-0">
+                                <p className="truncate text-base font-medium text-foreground">
+                                  {repo.name}
+                                  {repo.private ? (
+                                    <Lock className="ml-2 inline h-3.5 w-3.5 text-muted-foreground" />
+                                  ) : null}
+                                </p>
+                                <p className="truncate text-xs text-muted-foreground">
+                                  {repo.fullName}
+                                </p>
+                              </div>
+                            </TableCell>
+
+                            <TableCell className="px-6 py-3">
+                              <Badge
+                                variant={repo.private ? "secondary" : "outline"}
+                                className={cn(
+                                  "uppercase",
+                                  !repo.private &&
+                                    "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                                )}
+                              >
+                                {repo.visibility}
+                              </Badge>
+                            </TableCell>
+
+                            <TableCell className="px-6 py-3 text-muted-foreground">
+                              {formatRepoDate(repo.pushedAt)}
+                            </TableCell>
+
+                            <TableCell className="px-6 py-3 text-right">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-4"
+                                disabled={isImportingRepo === repo.fullName}
+                                onClick={() => openImportDialog(repo)}
+                              >
+                                {isImportingRepo === repo.fullName ? "Importing..." : "Import"}
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </main>
+          </SidebarInset>
+        </SidebarProvider>
+      </div>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-4xl p-10">
-          <DialogHeader className="space-y-3">
-            <DialogTitle className="text-4xl">New Project</DialogTitle>
-            <div className="rounded-lg border border-border/70 bg-muted/50 px-4 py-3">
-              <DialogDescription className="mb-1 text-sm">
-                Importing from GitHub
-              </DialogDescription>
-              <p className="flex items-center gap-3 text-xl font-medium text-foreground">
-                <Github className="h-5 w-5" />
-                {dialogRepo?.fullName ?? "-"}
-                <span className="flex items-center gap-1 text-muted-foreground">
-                  <GitBranch className="h-4 w-4" />
-                  {sourceRef}
-                </span>
-              </p>
-            </div>
+        <DialogContent className="max-w-xl rounded-lg border-border/80 bg-background/95 p-6">
+          <DialogHeader className="space-y-1">
+            <DialogTitle className="text-xl">Deploy repository</DialogTitle>
+            <DialogDescription>
+              Set project name, ref, and internal port for this app.
+            </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-6">
-            <p className="text-xl text-foreground">
-              Choose where you want to create the project and give it a name.
-            </p>
+          <div className="space-y-4">
+            <Card className="gap-0 border-border/80 bg-muted/30 py-0 shadow-none">
+              <CardHeader className="gap-1 pb-3">
+                <CardDescription className="text-xs font-medium tracking-[0.1em] uppercase">
+                  Source
+                </CardDescription>
+                <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                  <Github className="h-4 w-4" />
+                  {dialogRepo?.fullName ?? "-"}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pb-4">
+                <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                  <GitBranch className="h-3.5 w-3.5" />
+                  {sourceRef}
+                </p>
+              </CardContent>
+            </Card>
 
-            <div className="grid gap-5 md:grid-cols-[1fr_auto_1fr] md:items-end">
+            <Separator />
+
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label className="text-muted-foreground">Team</Label>
-                <Select value={team} onValueChange={setTeam}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="personal">{`${githubLogin}'s projects`}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <p className="hidden pb-2 text-muted-foreground md:block">/</p>
-
-              <div className="space-y-2">
-                <Label className="text-muted-foreground">Project Name</Label>
+                <Label htmlFor="project-name">Project Name</Label>
                 <Input
+                  id="project-name"
                   value={projectName}
                   onChange={(event) => setProjectName(event.target.value)}
                   placeholder={dialogRepo?.name ?? "my-project"}
                 />
               </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="app-slug">App Slug</Label>
+                <Input
+                  id="app-slug"
+                  readOnly
+                  value={slugPreview || "invalid"}
+                  className="font-mono"
+                />
+              </div>
             </div>
 
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Git Ref</Label>
-              <Input
-                value={sourceRef}
-                onChange={(event) => setSourceRef(event.target.value)}
-                placeholder={dialogRepo?.defaultBranch ?? "main"}
-              />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="git-ref">Git Ref</Label>
+                <Input
+                  id="git-ref"
+                  value={sourceRef}
+                  onChange={(event) => setSourceRef(event.target.value)}
+                  placeholder={dialogRepo?.defaultBranch ?? "main"}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="internal-port">Internal Port</Label>
+                <Input
+                  id="internal-port"
+                  value={internalPort}
+                  onChange={(event) => setInternalPort(event.target.value)}
+                  placeholder="3000"
+                  inputMode="numeric"
+                />
+              </div>
             </div>
-
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Internal Port</Label>
-              <Input
-                value={internalPort}
-                onChange={(event) => setInternalPort(event.target.value)}
-                placeholder="3000"
-                inputMode="numeric"
-              />
-            </div>
-
-            <Button
-              type="button"
-              variant="outline"
-              className="h-auto w-full justify-start rounded-lg px-4 py-3 text-left text-muted-foreground"
-            >
-              <ChevronRight className="mr-2 h-4 w-4" />
-              Build and Output Settings
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              className="h-auto w-full justify-start rounded-lg px-4 py-3 text-left text-muted-foreground"
-            >
-              <ChevronRight className="mr-2 h-4 w-4" />
-              Environment Variables
-            </Button>
           </div>
 
-          <Button
-            className="h-12 w-full text-lg"
-            disabled={isImportingRepo !== null}
-            onClick={() => {
-              void importRepo();
-            }}
-          >
-            {isImportingRepo ? "Deploying..." : "Deploy"}
-          </Button>
+          <DialogFooter className="mt-2 sm:justify-between">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setIsDialogOpen(false);
+              }}
+            >
+              Cancel
+            </Button>
+
+            <Button
+              type="button"
+              className="min-w-28"
+              disabled={isImportingRepo !== null || !slugPreview}
+              onClick={() => {
+                void importRepo();
+              }}
+            >
+              {isImportingRepo ? "Deploying..." : "Deploy"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

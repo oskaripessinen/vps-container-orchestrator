@@ -2,14 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getAuthenticatedGitHubUser } from "@/lib/clerk-user";
-import { fetchGitHub, listAccessibleOwners } from "@/lib/github";
+import { fetchGitHub } from "@/lib/github";
 
 export const runtime = "nodejs";
 
 const deploySchema = z.object({
   appSlug: z.string().regex(/^[a-z0-9-]+$/).min(2).max(63),
   internalPort: z.coerce.number().int().min(1).max(65535),
-  sourceOwner: z.string().regex(/^[A-Za-z0-9_.-]+$/),
   sourceRepo: z.string().regex(/^[A-Za-z0-9_.-]+$/),
   sourceRef: z.string().min(1).max(120),
 });
@@ -67,25 +66,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const accessibleOwners = new Set(
-    await listAccessibleOwners(
-      authenticatedUser.githubLogin,
-      authenticatedUser.githubAccessToken
-    )
-  );
-
-  if (!accessibleOwners.has(parsed.data.sourceOwner)) {
-    return NextResponse.json(
-      {
-        error: "Repository owner is not accessible for the signed-in user",
-      },
-      { status: 403 }
-    );
-  }
-
   try {
     await fetchGitHub(
-      `/repos/${encodeURIComponent(parsed.data.sourceOwner)}/${encodeURIComponent(parsed.data.sourceRepo)}`,
+      `/repos/${encodeURIComponent(authenticatedUser.githubLogin)}/${encodeURIComponent(parsed.data.sourceRepo)}`,
       authenticatedUser.githubAccessToken
     );
   } catch (error) {
@@ -160,7 +143,7 @@ export async function POST(request: NextRequest) {
         ref: workflowRef,
         inputs: {
           app_slug: parsed.data.appSlug,
-          source_owner: parsed.data.sourceOwner,
+          source_owner: authenticatedUser.githubLogin,
           source_repo: parsed.data.sourceRepo,
           source_ref: parsed.data.sourceRef,
           internal_port: String(parsed.data.internalPort),

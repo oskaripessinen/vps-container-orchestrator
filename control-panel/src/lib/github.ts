@@ -139,11 +139,11 @@ export async function listAccessibleContainerPackages(
 }
 
 export async function listAccessibleRepos(
+  githubLogin: string,
   accessToken: string
 ): Promise<
   Array<{
     name: string;
-    owner: string;
     fullName: string;
     private: boolean;
     visibility: string;
@@ -152,14 +152,14 @@ export async function listAccessibleRepos(
   }>
 > {
   const repos = await fetchGitHub<GitHubRepo[]>(
-    "/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member",
+    "/user/repos?per_page=100&sort=updated&affiliation=owner",
     accessToken
   );
 
   return repos
+    .filter((repo) => (repo.owner?.login ?? "").toLowerCase() === githubLogin.toLowerCase())
     .map((repo) => ({
       name: repo.name,
-      owner: repo.owner?.login ?? "unknown",
       fullName: repo.full_name,
       private: repo.private,
       visibility: repo.visibility ?? (repo.private ? "private" : "public"),

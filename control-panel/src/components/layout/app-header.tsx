@@ -9,7 +9,7 @@ import { ProfileDropdown } from "@/components/auth/profile-dropdown";
 export function AppHeader() {
   const pathname = usePathname();
 
-  if (pathname === "/login") {
+  if (pathname === "/login" || pathname.startsWith("/dashboard")) {
     return null;
   }
 
@@ -23,7 +23,7 @@ export function AppHeader() {
           <SignedOut>
             <GitHubAuthModal
               triggerLabel="Sign In"
-              triggerClassName="h-9 rounded-full px-5"
+              triggerClassName="h-9 rounded-md px-5"
             />
           </SignedOut>
           <SignedIn>
