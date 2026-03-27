@@ -106,12 +106,35 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ ! -f "source-repo/Dockerfile" ]; then
-            printf 'Missing Dockerfile at source-repo/Dockerfile\n'
-            exit 1
+          DOCKERFILE_PATH="source-repo/Dockerfile"
+
+          if [ ! -f "$DOCKERFILE_PATH" ]; then
+            mapfile -t DOCKERFILE_MATCHES < <(python3 - <<'PY'
+            import os
+
+            matches = []
+            for root, dirs, files in os.walk("source-repo"):
+                dirs[:] = [directory for directory in dirs if directory not in {".git", "node_modules"}]
+                if "Dockerfile" in files:
+                    matches.append(os.path.join(root, "Dockerfile"))
+
+            matches.sort(key=lambda path: (path.count(os.sep), path))
+
+            for path in matches:
+                print(path)
+            PY
+            )
+
+            if [ "${#DOCKERFILE_MATCHES[@]}" -eq 0 ]; then
+              printf 'Missing Dockerfile. Searched source-repo root and subdirectories.\n'
+              exit 1
+            fi
+
+            DOCKERFILE_PATH="${DOCKERFILE_MATCHES[0]}"
+            printf 'Using discovered Dockerfile: %s\n' "$DOCKERFILE_PATH"
           fi
 
-          docker build -f source-repo/Dockerfile -t "$APP_IMAGE" source-repo
+          docker build -f "$DOCKERFILE_PATH" -t "$APP_IMAGE" source-repo
           docker push "$APP_IMAGE"
 
       - name: Configure AWS credentials
