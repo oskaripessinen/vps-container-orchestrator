@@ -20,6 +20,16 @@ set -a
 . "${APP_DIR}/.env"
 set +a
 
+COMPOSE_PROJECT_NAME_VALUE="${APP_NAME:-$APP_SLUG}"
+
+legacy_compose_project_name() {
+  if [ -z "${COMPOSE_FILE:-}" ]; then
+    return 0
+  fi
+
+  basename "$(dirname "$COMPOSE_FILE")"
+}
+
 if [ "${DEPLOY_MODE:-image}" = "compose" ]; then
   if [ -z "${COMPOSE_FILE:-}" ]; then
     printf 'Missing COMPOSE_FILE in %s/.env\n' "$APP_DIR"
@@ -36,7 +46,19 @@ if [ "${DEPLOY_MODE:-image}" = "compose" ]; then
     exit 1
   fi
 
+  LEGACY_COMPOSE_PROJECT_NAME="$(legacy_compose_project_name)"
+
+  if [ -n "$LEGACY_COMPOSE_PROJECT_NAME" ] && [ "$LEGACY_COMPOSE_PROJECT_NAME" != "$COMPOSE_PROJECT_NAME_VALUE" ]; then
+    docker compose \
+      -p "$LEGACY_COMPOSE_PROJECT_NAME" \
+      --env-file "${APP_DIR}/.env" \
+      -f "${APP_DIR}/${COMPOSE_FILE}" \
+      -f "${APP_DIR}/docker-compose.traefik.yml" \
+      down --remove-orphans || true
+  fi
+
   docker compose \
+    -p "$COMPOSE_PROJECT_NAME_VALUE" \
     --env-file "${APP_DIR}/.env" \
     -f "${APP_DIR}/${COMPOSE_FILE}" \
     -f "${APP_DIR}/docker-compose.traefik.yml" \
@@ -44,6 +66,7 @@ if [ "${DEPLOY_MODE:-image}" = "compose" ]; then
     --ignore-pull-failures || true
 
   docker compose \
+    -p "$COMPOSE_PROJECT_NAME_VALUE" \
     --env-file "${APP_DIR}/.env" \
     -f "${APP_DIR}/${COMPOSE_FILE}" \
     -f "${APP_DIR}/docker-compose.traefik.yml" \
