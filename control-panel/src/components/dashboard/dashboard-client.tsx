@@ -154,6 +154,19 @@ const SHARED_INFRA_CONTAINER_NAMES = new Set([
   "nginx-proxy-manager",
 ]);
 
+function resolveDeploymentSlug(container: VpsStatus["containers"][number]) {
+  if (container.appSlug) {
+    return container.appSlug;
+  }
+
+  const composeStyleMatch = container.name.match(/^(.*)-[^-]+-\d+$/);
+  if (composeStyleMatch?.[1]) {
+    return composeStyleMatch[1];
+  }
+
+  return container.name;
+}
+
 function slugifyRepoName(name: string) {
   return name
     .toLowerCase()
@@ -380,7 +393,7 @@ export function DashboardClient() {
     const groups = new Map<string, DeploymentSummary>();
 
     for (const container of deployedContainers) {
-      const appSlug = container.appSlug ?? container.name;
+      const appSlug = resolveDeploymentSlug(container);
       const existing = groups.get(appSlug);
 
       if (existing) {
@@ -538,7 +551,9 @@ export function DashboardClient() {
         current
           ? {
               ...current,
-              containers: current.containers.filter((container) => (container.appSlug ?? container.name) !== appSlug),
+              containers: current.containers.filter(
+                (container) => resolveDeploymentSlug(container) !== appSlug
+              ),
             }
           : current
       );
