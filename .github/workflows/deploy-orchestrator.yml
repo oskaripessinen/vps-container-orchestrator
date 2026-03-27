@@ -107,7 +107,7 @@ jobs:
               'docker rm -f nginx-proxy-manager >/dev/null 2>&1 || true',
               'docker compose -f "$DEPLOY_DIR/infrastructure/docker-compose.yml" --env-file "$DEPLOY_DIR/infrastructure/.env" config >/dev/null',
               'docker compose -f "$DEPLOY_DIR/infrastructure/docker-compose.yml" --env-file "$DEPLOY_DIR/infrastructure/.env" up -d --remove-orphans',
-              f'''if [ -n "{control_panel_restart_command_b64}" ]; then CONTROL_PANEL_RESTART_COMMAND_VALUE=$(printf '%s' '{control_panel_restart_command_b64}' | base64 -d); su - "$DEPLOY_USER" -c "$CONTROL_PANEL_RESTART_COMMAND_VALUE"; else printf '%s\n' 'CONTROL_PANEL_RESTART_COMMAND secret not set; skipped control-panel restart.'; fi''',
+              f'''if [ -n "{control_panel_restart_command_b64}" ]; then CONTROL_PANEL_RESTART_COMMAND_VALUE=$(printf '%s' '{control_panel_restart_command_b64}' | base64 -d); if ! su - "$DEPLOY_USER" -c "$CONTROL_PANEL_RESTART_COMMAND_VALUE"; then printf '%s\n' 'CONTROL_PANEL_RESTART_COMMAND failed; continuing without control-panel restart.'; fi; else printf '%s\n' 'CONTROL_PANEL_RESTART_COMMAND secret not set; skipped control-panel restart.'; fi''',
               'docker image prune -f',
           ]
 
