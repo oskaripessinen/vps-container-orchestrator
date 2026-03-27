@@ -38,6 +38,7 @@ jobs:
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+      SOURCE_GITHUB_TOKEN: ${{ secrets.DEPLOY_GITHUB_TOKEN }}
       APP_SLUG: ${{ inputs.app_slug }}
       SOURCE_OWNER: ${{ inputs.source_owner }}
       SOURCE_REPO: ${{ inputs.source_repo }}
@@ -82,10 +83,42 @@ jobs:
           token: ${{ secrets.DEPLOY_GITHUB_TOKEN }}
           path: source-repo
 
+      - name: Detect deploy strategy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t COMPOSE_MATCHES < <(python3 -c $'import os\n\ncompose_names = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]\npriority = {name: index for index, name in enumerate(compose_names)}\nmatches = []\nfor root, dirs, files in os.walk("source-repo"):\n    dirs[:] = [directory for directory in dirs if directory not in {".git", "node_modules"}]\n    for filename in files:\n        if filename in priority:\n            matches.append(os.path.join(root, filename))\n\nmatches.sort(key=lambda path: (path.count(os.sep), priority[os.path.basename(path)], path))\n\nfor path in matches:\n    print(path)')
+
+          if [ "${#COMPOSE_MATCHES[@]}" -gt 0 ]; then
+            COMPOSE_FILE_PATH="${COMPOSE_MATCHES[0]#source-repo/}"
+            PUBLIC_SERVICE_NAME="$(ruby -ryaml -e '
+              preferred = %w[api app web backend server frontend]
+              config = YAML.load_file(ARGV[0]) || {}
+              services = config["services"]
+              abort("Missing services in compose file") unless services.is_a?(Hash) && !services.empty?
+              names = services.keys.map(&:to_s)
+              puts(preferred.find { |name| names.include?(name) } || names.first)
+            ' "${COMPOSE_MATCHES[0]}")"
+
+            printf 'DEPLOY_STRATEGY=compose\n' >> "$GITHUB_ENV"
+            printf 'COMPOSE_FILE_PATH=%s\n' "$COMPOSE_FILE_PATH" >> "$GITHUB_ENV"
+            printf 'PUBLIC_SERVICE_NAME=%s\n' "$PUBLIC_SERVICE_NAME" >> "$GITHUB_ENV"
+            printf 'Using compose deploy strategy with %s (public service: %s)\n' "$COMPOSE_FILE_PATH" "$PUBLIC_SERVICE_NAME"
+          else
+            printf 'DEPLOY_STRATEGY=dockerfile\n' >> "$GITHUB_ENV"
+            printf 'Using Dockerfile deploy strategy\n'
+          fi
+
       - name: Prepare image name
         shell: bash
         run: |
           set -euo pipefail
+
+          if [ "${DEPLOY_STRATEGY:-dockerfile}" = "compose" ]; then
+            printf 'Skipping image name generation for compose deploy.\n'
+            exit 0
+          fi
 
           IMAGE_REPO="${SOURCE_OWNER}-${SOURCE_REPO}"
           IMAGE_REPO="$(printf '%s' "$IMAGE_REPO" | tr '[:upper:]' '[:lower:]' | tr '._' '--')"
@@ -99,12 +132,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          if [ "${DEPLOY_STRATEGY:-dockerfile}" = "compose" ]; then
+            printf 'Skipping GHCR login for compose deploy.\n'
+            exit 0
+          fi
+
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Build and push image
         shell: bash
         run: |
           set -euo pipefail
+
+          if [ "${DEPLOY_STRATEGY:-dockerfile}" = "compose" ]; then
+            printf 'Skipping image build for compose deploy.\n'
+            exit 0
+          fi
 
           DOCKERFILE_PATH="source-repo/Dockerfile"
 
@@ -141,23 +185,43 @@ jobs:
             exit 1
           fi
 
-          export APP_SLUG APP_IMAGE INTERNAL_PORT
+          export APP_SLUG APP_IMAGE INTERNAL_PORT DEPLOY_STRATEGY COMPOSE_FILE_PATH PUBLIC_SERVICE_NAME SOURCE_OWNER SOURCE_REPO SOURCE_REF SOURCE_GITHUB_TOKEN
 
           SSM_PARAMETERS="$(python3 <<'PY'
           import json
           import os
 
           app_slug = os.environ["APP_SLUG"]
-          app_image = os.environ["APP_IMAGE"]
           internal_port = os.environ["INTERNAL_PORT"]
+          deploy_strategy = os.environ.get("DEPLOY_STRATEGY", "dockerfile")
+          app_image = os.environ.get("APP_IMAGE", "")
+          compose_file_path = os.environ.get("COMPOSE_FILE_PATH", "")
+          public_service_name = os.environ.get("PUBLIC_SERVICE_NAME", "")
+          source_owner = os.environ["SOURCE_OWNER"]
+          source_repo = os.environ["SOURCE_REPO"]
+          source_ref = os.environ["SOURCE_REF"]
+          source_github_token = os.environ.get("SOURCE_GITHUB_TOKEN", "")
+          source_github_token_b64 = ""
+
+          if source_github_token:
+              import base64
+              source_github_token_b64 = base64.b64encode(source_github_token.encode()).decode()
 
           commands = [
               'set -eu',
               'if [ -d /home/ubuntu/deploy-hub ]; then DEPLOY_DIR=/home/ubuntu/deploy-hub; DEPLOY_USER=ubuntu; elif [ -d /home/ec2-user/deploy-hub ]; then DEPLOY_DIR=/home/ec2-user/deploy-hub; DEPLOY_USER=ec2-user; else echo Missing deploy-hub directory under /home/ubuntu or /home/ec2-user; exit 1; fi',
               'if [ ! -d "$DEPLOY_DIR/.git" ]; then echo Missing git repo at $DEPLOY_DIR; exit 1; fi',
               'su - "$DEPLOY_USER" -c "cd \"$DEPLOY_DIR\" && git fetch origin main && git checkout main && git pull --ff-only origin main"',
-              f'su - "$DEPLOY_USER" -c "bash \"$DEPLOY_DIR/scripts/deploy-app-from-image.sh\" {app_slug!r} {app_image!r} {internal_port!r}"',
           ]
+
+          if deploy_strategy == "compose":
+              commands.append(
+                  f'''SOURCE_GITHUB_TOKEN_VALUE=$(printf '%s' '{source_github_token_b64}' | base64 -d); su - "$DEPLOY_USER" -c "SOURCE_GITHUB_TOKEN=\"$SOURCE_GITHUB_TOKEN_VALUE\" bash \"$DEPLOY_DIR/scripts/deploy-app-from-source.sh\" {app_slug!r} {source_owner!r} {source_repo!r} {source_ref!r} {compose_file_path!r} {internal_port!r} {public_service_name!r}"'''
+              )
+          else:
+              commands.append(
+                  f'''su - "$DEPLOY_USER" -c "bash \"$DEPLOY_DIR/scripts/deploy-app-from-image.sh\" {app_slug!r} {app_image!r} {internal_port!r}"'''
+              )
 
           print(json.dumps({"commands": commands}))
           PY

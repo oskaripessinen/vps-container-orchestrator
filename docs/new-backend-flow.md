@@ -56,3 +56,19 @@ Required GitHub repository secrets in backend repo:
 4. VPS runs `bash /home/<SSH_USER>/deploy-hub/scripts/server-deploy.sh <APP_SLUG>`.
 5. `docker compose pull` fetches new image and `docker compose up -d` rolls container forward.
 6. Watchtower remains as fallback updater if the deploy job is skipped or fails.
+
+## Compose-first UI deploys
+
+The `deploy-app-from-ui.yml` workflow now supports two source repository modes:
+
+- If a Compose file is found in the source repo (`docker-compose.yml`, `docker-compose.yaml`,
+  `compose.yml`, `compose.yaml`), the deploy flow clones the repo to the VPS and runs that Compose
+  stack instead of forcing a single-image Dockerfile deploy.
+- If no Compose file is found, it falls back to the single Dockerfile image flow.
+
+For Compose deploys, the workflow:
+
+1. finds the first Compose file in the repo, preferring shallow paths
+2. selects a public service (`api`, `app`, `web`, `backend`, `server`, `frontend`, or first service)
+3. clones the source repo under `apps/<app-slug>/source-repo/` on the VPS
+4. writes a Traefik override so `<app-slug>.<base-domain>` points to the selected service on the given internal port

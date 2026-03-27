@@ -1,0 +1,115 @@
+name: Delete App From UI
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_slug:
+        description: "App slug (apps/<app-slug>)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: delete-app-${{ inputs.app_slug }}
+  cancel-in-progress: false
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+      APP_SLUG: ${{ inputs.app_slug }}
+    steps:
+      - name: Validate workflow inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$APP_SLUG" =~ ^[a-z0-9-]+$ ]]; then
+            printf 'Invalid app slug: %s\n' "$APP_SLUG"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Delete app through AWS SSM
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "$AWS_REGION" ] || [ -z "$EC2_INSTANCE_ID" ]; then
+            printf 'Missing AWS_REGION or EC2_INSTANCE_ID secret.\n'
+            exit 1
+          fi
+
+          export APP_SLUG
+
+          SSM_PARAMETERS="$(python3 <<'PY'
+          import json
+          import os
+
+          app_slug = os.environ["APP_SLUG"]
+
+          commands = [
+              'set -eu',
+              'if [ -d /home/ubuntu/deploy-hub ]; then DEPLOY_DIR=/home/ubuntu/deploy-hub; DEPLOY_USER=ubuntu; elif [ -d /home/ec2-user/deploy-hub ]; then DEPLOY_DIR=/home/ec2-user/deploy-hub; DEPLOY_USER=ec2-user; else echo Missing deploy-hub directory under /home/ubuntu or /home/ec2-user; exit 1; fi',
+              'if [ ! -d "$DEPLOY_DIR/.git" ]; then echo Missing git repo at $DEPLOY_DIR; exit 1; fi',
+              'su - "$DEPLOY_USER" -c "cd \"$DEPLOY_DIR\" && git fetch origin main && git checkout main && git pull --ff-only origin main"',
+              f'''su - "$DEPLOY_USER" -c "bash \"$DEPLOY_DIR/scripts/remove-app.sh\" {app_slug!r}"''',
+          ]
+
+          print(json.dumps({"commands": commands}))
+          PY
+          )"
+
+          COMMAND_ID="$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Delete app ${APP_SLUG} from GitHub Actions" \
+            --timeout-seconds 1800 \
+            --parameters "$SSM_PARAMETERS" \
+            --query 'Command.CommandId' \
+            --output text)"
+
+          printf 'Started SSM command: %s\n' "$COMMAND_ID"
+
+          aws ssm wait command-executed \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" || true
+
+          STATUS="$(aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query 'Status' \
+            --output text)"
+
+          printf 'SSM command status: %s\n' "$STATUS"
+          printf '%s\n' '---- SSM stdout ----'
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query 'StandardOutputContent' \
+            --output text || true
+          printf '%s\n' '---- SSM stderr ----'
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query 'StandardErrorContent' \
+            --output text || true
+
+          if [ "$STATUS" != "Success" ]; then
+            exit 1
+          fi

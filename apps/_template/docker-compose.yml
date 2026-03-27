@@ -7,6 +7,7 @@ services:
       - "${APP_INTERNAL_PORT}"
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "orchestrator.app-slug=${APP_NAME}"
       - "traefik.enable=true"
       - "traefik.docker.network=vps-container-orchestrator"
       - "traefik.http.routers.${APP_NAME}.rule=Host(`${APP_DOMAIN}`)"

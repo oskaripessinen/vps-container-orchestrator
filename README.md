@@ -105,6 +105,12 @@ This creates:
 - `apps/<app-slug>/docker-compose.yml`
 - `apps/<app-slug>/.env`
 
+If the source repository contains a Compose file (`docker-compose.yml`, `docker-compose.yaml`,
+`compose.yml`, or `compose.yaml`) anywhere in the repo, the UI-triggered deploy flow now prefers
+that Compose app definition over a single Dockerfile build. The server clones the source repo under
+`apps/<app-slug>/source-repo/`, deploys the Compose stack, and adds a Traefik override for the
+detected public service.
+
 Run the first deploy:
 
 ```bash

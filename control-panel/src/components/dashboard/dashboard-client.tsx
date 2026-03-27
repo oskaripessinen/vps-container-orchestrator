@@ -10,6 +10,7 @@ import {
   Lock,
   Rocket,
   Search,
+  Trash2,
 } from "lucide-react";
 
 import { ProfileDropdown } from "@/components/auth/profile-dropdown";
@@ -96,6 +97,8 @@ type VpsStatus = {
     image: string;
     state: string;
     status: string;
+    appSlug: string | null;
+    composeService: string | null;
     cpuPercent: number;
     memory: {
       usedBytes: number;
@@ -132,6 +135,17 @@ const NAV_ITEMS = [
 ] as const;
 
 type NavKey = (typeof NAV_ITEMS)[number]["key"];
+
+type DeploymentSummary = {
+  appSlug: string;
+  containers: VpsStatus["containers"];
+  services: string[];
+  state: string;
+  status: string;
+  images: string[];
+  totalPids: number;
+  totalCpuPercent: number;
+};
 
 const SHARED_INFRA_CONTAINER_NAMES = new Set([
   "traefik",
@@ -240,6 +254,7 @@ export function DashboardClient() {
   const [feedback, setFeedback] = useState<DeployFeedback | null>(null);
   const [vpsStatus, setVpsStatus] = useState<VpsStatus | null>(null);
   const [isLoadingVpsStatus, setIsLoadingVpsStatus] = useState(true);
+  const [isDeletingApp, setIsDeletingApp] = useState<string | null>(null);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [dialogRepo, setDialogRepo] = useState<SourceRepo | null>(null);
@@ -358,6 +373,47 @@ export function DashboardClient() {
     );
   }, [vpsStatus]);
 
+  const deployments = useMemo<DeploymentSummary[]>(() => {
+    const groups = new Map<string, DeploymentSummary>();
+
+    for (const container of deployedContainers) {
+      const appSlug = container.appSlug ?? container.name;
+      const existing = groups.get(appSlug);
+
+      if (existing) {
+        existing.containers.push(container);
+        existing.totalPids += container.pids;
+        existing.totalCpuPercent += container.cpuPercent;
+        if (!existing.images.includes(container.image)) {
+          existing.images.push(container.image);
+        }
+        if (container.composeService && !existing.services.includes(container.composeService)) {
+          existing.services.push(container.composeService);
+        }
+        if (existing.state !== container.state) {
+          existing.state = existing.state === "running" ? container.state : existing.state;
+        }
+        if (existing.status !== container.status) {
+          existing.status = `${existing.containers.length} containers`;
+        }
+        continue;
+      }
+
+      groups.set(appSlug, {
+        appSlug,
+        containers: [container],
+        services: container.composeService ? [container.composeService] : [],
+        state: container.state,
+        status: container.status,
+        images: [container.image],
+        totalPids: container.pids,
+        totalCpuPercent: container.cpuPercent,
+      });
+    }
+
+    return Array.from(groups.values()).sort((a, b) => a.appSlug.localeCompare(b.appSlug));
+  }, [deployedContainers]);
+
   const activeItem = NAV_ITEMS.find((item) => item.key === activeView) ?? NAV_ITEMS[0];
 
   const slugPreview = slugifyRepoName(projectName || dialogRepo?.name || "");
@@ -439,6 +495,60 @@ export function DashboardClient() {
       });
     } finally {
       setIsImportingRepo(null);
+    }
+  };
+
+  const deleteDeployment = async (appSlug: string) => {
+    if (!window.confirm(`Delete deployment ${appSlug}? This removes the app stack from the server.`)) {
+      return;
+    }
+
+    setFeedback(null);
+    setIsDeletingApp(appSlug);
+
+    try {
+      const response = await fetch("/api/deployments", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ appSlug }),
+      });
+
+      const data = (await response.json()) as {
+        workflowUrl?: string;
+        error?: string;
+        detail?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(data.detail || data.error || "Delete failed");
+      }
+
+      setFeedback({
+        status: "success",
+        title: "Delete queued",
+        detail: data.workflowUrl
+          ? `Removal started: ${data.workflowUrl}`
+          : `Removal started for ${appSlug}.`,
+      });
+
+      setVpsStatus((current) =>
+        current
+          ? {
+              ...current,
+              containers: current.containers.filter((container) => (container.appSlug ?? container.name) !== appSlug),
+            }
+          : current
+      );
+    } catch (error) {
+      setFeedback({
+        status: "error",
+        title: "Delete failed",
+        detail: error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setIsDeletingApp(null);
     }
   };
 
@@ -676,9 +786,9 @@ export function DashboardClient() {
                       <CardTitle className="text-base">Deployments</CardTitle>
                       <CardDescription>
                         {isLoadingVpsStatus
-                          ? "Loading deployed containers..."
+                          ? "Loading deployments..."
                           : vpsStatus
-                            ? `${deployedContainers.length} app deployments on ${vpsStatus.hostname}`
+                            ? `${deployments.length} app deployments on ${vpsStatus.hostname}`
                             : "Container list not available"}
                       </CardDescription>
                     </div>
@@ -688,50 +798,71 @@ export function DashboardClient() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="px-6">Container</TableHead>
+                          <TableHead className="px-6">Deployment</TableHead>
                           <TableHead className="px-6">State</TableHead>
-                          <TableHead className="px-6">Image</TableHead>
-                          <TableHead className="px-6">Ports / PIDs</TableHead>
+                          <TableHead className="px-6">Services / Images</TableHead>
+                          <TableHead className="px-6">Usage</TableHead>
+                          <TableHead className="px-6 text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {isLoadingVpsStatus ? (
                           <TableRow>
-                            <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
-                              Loading deployed containers...
+                            <TableCell colSpan={5} className="px-6 py-6 text-sm text-muted-foreground">
+                              Loading deployments...
                             </TableCell>
                           </TableRow>
                         ) : !vpsStatus ? (
                           <TableRow>
-                            <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
+                            <TableCell colSpan={5} className="px-6 py-6 text-sm text-muted-foreground">
                               Could not load container inventory.
                             </TableCell>
                           </TableRow>
-                        ) : deployedContainers.length === 0 ? (
+                        ) : deployments.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
+                            <TableCell colSpan={5} className="px-6 py-6 text-sm text-muted-foreground">
                               No running containers.
                             </TableCell>
                           </TableRow>
                         ) : (
-                          deployedContainers.map((container) => (
-                            <TableRow key={container.id}>
+                          deployments.map((deployment) => (
+                            <TableRow key={deployment.appSlug}>
                               <TableCell className="px-6 py-3 align-top whitespace-normal">
-                                <p className="font-medium text-foreground">{container.name}</p>
-                                <p className="text-xs text-muted-foreground">{container.id.slice(0, 12)}</p>
+                                <p className="font-medium text-foreground">{deployment.appSlug}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {deployment.containers.length} container{deployment.containers.length === 1 ? "" : "s"}
+                                </p>
                               </TableCell>
                               <TableCell className="px-6 py-3 align-top">
                                 <Badge variant="outline" className="uppercase">
-                                  {container.state}
+                                  {deployment.state}
                                 </Badge>
-                                <p className="mt-2 text-xs text-muted-foreground">{container.status}</p>
-                              </TableCell>
-                              <TableCell className="px-6 py-3 text-sm text-foreground whitespace-normal">
-                                {container.image}
+                                <p className="mt-2 text-xs text-muted-foreground">{deployment.status}</p>
                               </TableCell>
                               <TableCell className="px-6 py-3 text-xs text-muted-foreground whitespace-normal">
-                                <p>PIDs {container.pids}</p>
-                                <p>CPU {container.cpuPercent.toFixed(1)}%</p>
+                                {deployment.services.length > 0 ? (
+                                  <p>Services {deployment.services.join(", ")}</p>
+                                ) : (
+                                  <p>Single container app</p>
+                                )}
+                                <p className="mt-1 text-sm text-foreground">{deployment.images.join(", ")}</p>
+                              </TableCell>
+                              <TableCell className="px-6 py-3 text-xs text-muted-foreground whitespace-normal">
+                                <p>PIDs {deployment.totalPids}</p>
+                                <p>CPU {deployment.totalCpuPercent.toFixed(1)}%</p>
+                              </TableCell>
+                              <TableCell className="px-6 py-3 text-right">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 px-3 text-destructive hover:text-destructive"
+                                  disabled={isDeletingApp === deployment.appSlug}
+                                  onClick={() => deleteDeployment(deployment.appSlug)}
+                                >
+                                  <Trash2 className="mr-1 h-3.5 w-3.5" />
+                                  {isDeletingApp === deployment.appSlug ? "Deleting..." : "Delete"}
+                                </Button>
                               </TableCell>
                             </TableRow>
                           ))

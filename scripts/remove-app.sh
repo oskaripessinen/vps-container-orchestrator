@@ -11,6 +11,21 @@ SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd)"
 BASE_DIR="${DEPLOY_HUB_DIR:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 APP_DIR="${BASE_DIR}/apps/${APP_SLUG}"
 
+if [[ ! "$APP_SLUG" =~ ^[a-z0-9-]+$ ]]; then
+  printf 'Invalid app slug: %s\n' "$APP_SLUG"
+  exit 1
+fi
+
+if [ "$APP_SLUG" = "_template" ]; then
+  printf 'Refusing to remove template app\n'
+  exit 1
+fi
+
+if [ ! -d "$APP_DIR" ]; then
+  printf 'App directory not found: %s\n' "$APP_DIR"
+  exit 1
+fi
+
 if [ ! -f "${APP_DIR}/.env" ]; then
   printf 'Missing .env for app: %s\n' "$APP_SLUG"
   exit 1
@@ -40,28 +55,14 @@ if [ "${DEPLOY_MODE:-image}" = "compose" ]; then
     --env-file "${APP_DIR}/.env" \
     -f "${APP_DIR}/${COMPOSE_FILE}" \
     -f "${APP_DIR}/docker-compose.traefik.yml" \
-    pull \
-    --ignore-pull-failures || true
-
-  docker compose \
-    --env-file "${APP_DIR}/.env" \
-    -f "${APP_DIR}/${COMPOSE_FILE}" \
-    -f "${APP_DIR}/docker-compose.traefik.yml" \
-    up -d --build --remove-orphans
-
-  docker image prune -f
-  printf 'Compose deploy complete for %s\n' "$APP_SLUG"
-  exit 0
+    down --remove-orphans || true
+else
+  if [ -f "${APP_DIR}/docker-compose.yml" ]; then
+    docker compose --env-file "${APP_DIR}/.env" -f "${APP_DIR}/docker-compose.yml" down --remove-orphans || true
+  fi
 fi
 
-if [ ! -f "${APP_DIR}/docker-compose.yml" ]; then
-  printf 'Missing docker-compose.yml for app: %s\n' "$APP_SLUG"
-  exit 1
-fi
-
-cd "$APP_DIR"
-docker compose --env-file "${APP_DIR}/.env" pull
-docker compose --env-file "${APP_DIR}/.env" up -d --remove-orphans
+rm -rf "$APP_DIR"
 docker image prune -f
 
-printf 'Deploy complete for %s\n' "$APP_SLUG"
+printf 'Removed app: %s\n' "$APP_SLUG"

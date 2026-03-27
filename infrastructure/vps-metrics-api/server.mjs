@@ -204,6 +204,11 @@ function toContainerMetrics(container, stats, defaultCpus) {
     image: container.Image,
     state: container.State,
     status: container.Status,
+    appSlug:
+      container.Labels?.["orchestrator.app-slug"] ??
+      container.Labels?.["com.docker.compose.project"] ??
+      null,
+    composeService: container.Labels?.["com.docker.compose.service"] ?? null,
     cpuPercent: Number(cpuPercent.toFixed(1)),
     memory: {
       usedBytes: memoryUsageBytes,
