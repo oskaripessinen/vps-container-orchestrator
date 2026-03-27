@@ -113,7 +113,7 @@ type VpsStatus = {
 const NAV_ITEMS = [
   {
     key: "repositories",
-    label: "Repositories",
+    label: "Deploy",
     icon: FolderGit2,
     disabled: false,
   },
@@ -121,15 +121,24 @@ const NAV_ITEMS = [
     key: "deployments",
     label: "Deployments",
     icon: Rocket,
-    disabled: true,
+    disabled: false,
   },
   {
     key: "activity",
     label: "Activity",
     icon: Activity,
-    disabled: true,
+    disabled: false,
   },
 ] as const;
+
+type NavKey = (typeof NAV_ITEMS)[number]["key"];
+
+const SHARED_INFRA_CONTAINER_NAMES = new Set([
+  "traefik",
+  "watchtower",
+  "vps-metrics-api",
+  "nginx-proxy-manager",
+]);
 
 function slugifyRepoName(name: string) {
   return name
@@ -222,6 +231,7 @@ function formatTimestamp(value: string) {
 }
 
 export function DashboardClient() {
+  const [activeView, setActiveView] = useState<NavKey>("repositories");
   const [repos, setRepos] = useState<SourceRepo[]>([]);
   const [githubLogin, setGithubLogin] = useState<string>("github-user");
   const [isLoadingRepos, setIsLoadingRepos] = useState(true);
@@ -342,6 +352,14 @@ export function DashboardClient() {
     return vpsStatus.containers.slice(0, 8);
   }, [vpsStatus]);
 
+  const deployedContainers = useMemo(() => {
+    return (vpsStatus?.containers ?? []).filter(
+      (container) => !SHARED_INFRA_CONTAINER_NAMES.has(container.name)
+    );
+  }, [vpsStatus]);
+
+  const activeItem = NAV_ITEMS.find((item) => item.key === activeView) ?? NAV_ITEMS[0];
+
   const slugPreview = slugifyRepoName(projectName || dialogRepo?.name || "");
 
   const openImportDialog = (repo: SourceRepo) => {
@@ -452,12 +470,17 @@ export function DashboardClient() {
                         <SidebarMenuButton
                           type="button"
                           size="lg"
-                          isActive={!item.disabled}
+                          isActive={activeView === item.key}
                           disabled={item.disabled}
                           className={cn(
                             "h-11",
                             item.disabled && "cursor-not-allowed opacity-55"
                           )}
+                          onClick={() => {
+                            if (!item.disabled) {
+                              setActiveView(item.key);
+                            }
+                          }}
                         >
                           <Icon className="h-4 w-4 shrink-0" />
                           <span className="flex min-w-0 flex-col items-start leading-tight group-data-[state=collapsed]/sidebar:hidden">
@@ -506,7 +529,7 @@ export function DashboardClient() {
               <div className="relative flex h-14 items-center px-3">
                 <SidebarTrigger className="shrink-0" />
                 <p className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-sm font-semibold text-foreground">
-                  Deploy
+                  {activeItem.label}
                 </p>
                 <Button type="button" variant="ghost" size="icon-sm" className="ml-auto text-muted-foreground">
                   <EllipsisVertical className="h-4 w-4" />
@@ -516,32 +539,125 @@ export function DashboardClient() {
             </header>
 
             <main className="flex min-h-0 w-full flex-1 flex-col gap-4 overflow-hidden px-4 py-6 sm:px-6 lg:px-8">
-              <Card className="animate-fade-up gap-0 border-border/80 bg-background/60 py-0">
-                <CardHeader className="flex flex-col gap-4 py-4 sm:py-5 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="max-w-2xl space-y-1">
-                    <CardTitle className="text-lg tracking-tight sm:text-xl">Deploy</CardTitle>
-                    <CardDescription>
-                      Import a GitHub repository and queue a new deployment workflow.
-                    </CardDescription>
-                  </div>
+              {activeView === "repositories" ? (
+                <>
+                  <Card className="animate-fade-up gap-0 border-border/80 bg-background/60 py-0">
+                    <CardHeader className="flex flex-col gap-4 py-4 sm:py-5 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="max-w-2xl space-y-1">
+                        <CardTitle className="text-lg tracking-tight sm:text-xl">Deploy</CardTitle>
+                        <CardDescription>
+                          Import a GitHub repository and queue a new deployment workflow.
+                        </CardDescription>
+                      </div>
 
-                  <div className="w-full lg:max-w-2xl">
-                    <Label htmlFor="repo-search" className="sr-only">
-                      Search repositories
-                    </Label>
-                    <div className="relative">
-                      <Search className="pointer-events-none absolute top-2.5 left-3 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        id="repo-search"
-                        value={searchTerm}
-                        onChange={(event) => setSearchTerm(event.target.value)}
-                        placeholder="Search by repository name"
-                        className="pl-9"
-                      />
-                    </div>
-                  </div>
-                </CardHeader>
-              </Card>
+                      <div className="w-full lg:max-w-2xl">
+                        <Label htmlFor="repo-search" className="sr-only">
+                          Search repositories
+                        </Label>
+                        <div className="relative">
+                          <Search className="pointer-events-none absolute top-2.5 left-3 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            id="repo-search"
+                            value={searchTerm}
+                            onChange={(event) => setSearchTerm(event.target.value)}
+                            placeholder="Search by repository name"
+                            className="pl-9"
+                          />
+                        </div>
+                      </div>
+                    </CardHeader>
+                  </Card>
+
+                  <Card className="animate-fade-up animation-delay-200 min-h-0 flex-1 gap-0 overflow-hidden border-border/80 bg-background/60 py-0">
+                    <CardContent className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-0 py-0">
+                      <Table className="table-fixed">
+                        <colgroup>
+                          <col className="w-[52%]" />
+                          <col className="w-[18%]" />
+                          <col className="w-[18%]" />
+                          <col className="w-[12%]" />
+                        </colgroup>
+                        <TableBody>
+                          {isLoadingRepos ? (
+                            <TableRow>
+                              <TableCell
+                                colSpan={4}
+                                className="px-6 py-8 text-center text-sm text-muted-foreground"
+                              >
+                                Loading repositories...
+                              </TableCell>
+                            </TableRow>
+                          ) : filteredRepos.length === 0 ? (
+                            <TableRow>
+                              <TableCell
+                                colSpan={4}
+                                className="space-y-2 px-6 py-8 text-center text-sm text-muted-foreground whitespace-normal"
+                              >
+                                <p>No repositories found.</p>
+                                <p className="text-xs">
+                                  Ensure GitHub OAuth scopes include `repo`, then sign out and sign
+                                  in again.
+                                </p>
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            filteredRepos.map((repo, index) => (
+                              <TableRow
+                                key={repo.fullName}
+                                className="animate-fade-up"
+                                style={{ animationDelay: `${Math.min(index, 10) * 35}ms` }}
+                              >
+                                <TableCell className="min-w-0 max-w-0 px-6 py-3 whitespace-normal">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-base font-medium text-foreground">
+                                      {repo.name}
+                                      {repo.private ? (
+                                        <Lock className="ml-2 inline h-3.5 w-3.5 text-muted-foreground" />
+                                      ) : null}
+                                    </p>
+                                    <p className="truncate text-xs text-muted-foreground">
+                                      {repo.fullName}
+                                    </p>
+                                  </div>
+                                </TableCell>
+
+                                <TableCell className="px-6 py-3">
+                                  <Badge
+                                    variant={repo.private ? "secondary" : "outline"}
+                                    className={cn(
+                                      "uppercase",
+                                      !repo.private &&
+                                        "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                                    )}
+                                  >
+                                    {repo.visibility}
+                                  </Badge>
+                                </TableCell>
+
+                                <TableCell className="px-6 py-3 text-muted-foreground">
+                                  {formatRepoDate(repo.pushedAt)}
+                                </TableCell>
+
+                                <TableCell className="px-6 py-3 text-right">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 px-4"
+                                    disabled={isImportingRepo === repo.fullName}
+                                    onClick={() => openImportDialog(repo)}
+                                  >
+                                    {isImportingRepo === repo.fullName ? "Importing..." : "Import"}
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                  </Card>
+                </>
+              ) : null}
 
               {feedback && (
                 <Alert
@@ -553,195 +669,183 @@ export function DashboardClient() {
                 </Alert>
               )}
 
-              <Card className="animate-fade-up animation-delay-150 gap-0 border-border/80 bg-background/60 py-0">
-                <CardHeader className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <CardTitle className="text-base">VPS metrics</CardTitle>
-                    <CardDescription>
-                      {isLoadingVpsStatus
-                        ? "Loading real-time server usage..."
-                        : vpsStatus
-                          ? `Updated ${formatTimestamp(vpsStatus.timestamp)} - ${vpsStatus.hostname}`
-                          : "Metrics endpoint not available"}
-                    </CardDescription>
-                  </div>
-
-                  {vpsStatus ? (
-                    <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                      <div className="border border-border/70 bg-muted/30 px-2 py-1.5">
-                        <p className="text-muted-foreground">CPU</p>
-                        <p className="text-sm font-semibold text-foreground">
-                          {vpsStatus.cpu.usedPercent.toFixed(1)}%
-                        </p>
-                      </div>
-                      <div className="border border-border/70 bg-muted/30 px-2 py-1.5">
-                        <p className="text-muted-foreground">Load</p>
-                        <p className="text-sm font-semibold text-foreground">
-                          {vpsStatus.cpu.loadAverage1m.toFixed(2)}
-                        </p>
-                      </div>
-                      <div className="border border-border/70 bg-muted/30 px-2 py-1.5">
-                        <p className="text-muted-foreground">Memory</p>
-                        <p className="text-sm font-semibold text-foreground">
-                          {vpsStatus.memory.usedPercent.toFixed(1)}%
-                        </p>
-                      </div>
-                      <div className="border border-border/70 bg-muted/30 px-2 py-1.5">
-                        <p className="text-muted-foreground">Containers</p>
-                        <p className="text-sm font-semibold text-foreground">
-                          {vpsStatus.containers.length}
-                        </p>
-                      </div>
+              {activeView === "deployments" ? (
+                <Card className="animate-fade-up animation-delay-150 min-h-0 flex-1 gap-0 border-border/80 bg-background/60 py-0">
+                  <CardHeader className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <CardTitle className="text-base">Deployments</CardTitle>
+                      <CardDescription>
+                        {isLoadingVpsStatus
+                          ? "Loading deployed containers..."
+                          : vpsStatus
+                            ? `${deployedContainers.length} app deployments on ${vpsStatus.hostname}`
+                            : "Container list not available"}
+                      </CardDescription>
                     </div>
-                  ) : null}
-                </CardHeader>
+                  </CardHeader>
 
-                <CardContent className="px-0 pb-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="px-6">Container</TableHead>
-                        <TableHead className="px-6">CPU</TableHead>
-                        <TableHead className="px-6">Memory</TableHead>
-                        <TableHead className="px-6">Network</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {isLoadingVpsStatus ? (
+                  <CardContent className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-0 pb-0">
+                    <Table>
+                      <TableHeader>
                         <TableRow>
-                          <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
-                            Loading VPS metrics...
-                          </TableCell>
+                          <TableHead className="px-6">Container</TableHead>
+                          <TableHead className="px-6">State</TableHead>
+                          <TableHead className="px-6">Image</TableHead>
+                          <TableHead className="px-6">Ports / PIDs</TableHead>
                         </TableRow>
-                      ) : !vpsStatus ? (
-                        <TableRow>
-                          <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
-                            Could not load VPS metrics. Check `VPS_METRICS_URL` and
-                            `VPS_METRICS_TOKEN` in control-panel environment.
-                          </TableCell>
-                        </TableRow>
-                      ) : topContainers.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
-                            No running containers.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        topContainers.map((container) => (
-                          <TableRow key={container.id}>
-                            <TableCell className="px-6 py-3 align-top whitespace-normal">
-                              <p className="truncate font-medium text-foreground">{container.name}</p>
-                              <p className="truncate text-xs text-muted-foreground">{container.image}</p>
-                            </TableCell>
-                            <TableCell className="px-6 py-3 text-sm text-foreground">
-                              {container.cpuPercent.toFixed(1)}%
-                            </TableCell>
-                            <TableCell className="px-6 py-3 text-sm text-foreground whitespace-normal">
-                              {formatBytes(container.memory.usedBytes)}
-                              <span className="text-muted-foreground">
-                                {` / ${formatBytes(container.memory.limitBytes)} (${container.memory.usedPercent.toFixed(1)}%)`}
-                              </span>
-                            </TableCell>
-                            <TableCell className="px-6 py-3 text-xs text-muted-foreground whitespace-normal">
-                              <p>RX {formatBytes(container.network.rxBytes)}</p>
-                              <p>TX {formatBytes(container.network.txBytes)}</p>
+                      </TableHeader>
+                      <TableBody>
+                        {isLoadingVpsStatus ? (
+                          <TableRow>
+                            <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
+                              Loading deployed containers...
                             </TableCell>
                           </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
+                        ) : !vpsStatus ? (
+                          <TableRow>
+                            <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
+                              Could not load container inventory.
+                            </TableCell>
+                          </TableRow>
+                        ) : deployedContainers.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
+                              No running containers.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          deployedContainers.map((container) => (
+                            <TableRow key={container.id}>
+                              <TableCell className="px-6 py-3 align-top whitespace-normal">
+                                <p className="font-medium text-foreground">{container.name}</p>
+                                <p className="text-xs text-muted-foreground">{container.id.slice(0, 12)}</p>
+                              </TableCell>
+                              <TableCell className="px-6 py-3 align-top">
+                                <Badge variant="outline" className="uppercase">
+                                  {container.state}
+                                </Badge>
+                                <p className="mt-2 text-xs text-muted-foreground">{container.status}</p>
+                              </TableCell>
+                              <TableCell className="px-6 py-3 text-sm text-foreground whitespace-normal">
+                                {container.image}
+                              </TableCell>
+                              <TableCell className="px-6 py-3 text-xs text-muted-foreground whitespace-normal">
+                                <p>PIDs {container.pids}</p>
+                                <p>CPU {container.cpuPercent.toFixed(1)}%</p>
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              ) : null}
 
-              <Card className="animate-fade-up animation-delay-200 min-h-0 flex-1 gap-0 overflow-hidden border-border/80 bg-background/60 py-0">
-                <CardContent className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-0 py-0">
-                  <Table className="table-fixed">
-                    <colgroup>
-                      <col className="w-[52%]" />
-                      <col className="w-[18%]" />
-                      <col className="w-[18%]" />
-                      <col className="w-[12%]" />
-                    </colgroup>
-                    <TableBody>
-                      {isLoadingRepos ? (
-                        <TableRow>
-                          <TableCell
-                            colSpan={4}
-                            className="px-6 py-8 text-center text-sm text-muted-foreground"
-                          >
-                            Loading repositories...
-                          </TableCell>
-                        </TableRow>
-                      ) : filteredRepos.length === 0 ? (
-                        <TableRow>
-                          <TableCell
-                            colSpan={4}
-                            className="space-y-2 px-6 py-8 text-center text-sm text-muted-foreground whitespace-normal"
-                          >
-                            <p>No repositories found.</p>
-                            <p className="text-xs">
-                              Ensure GitHub OAuth scopes include `repo`, then sign out and sign
-                              in again.
+              {activeView === "activity" ? (
+                <>
+                  <Card className="animate-fade-up animation-delay-150 gap-0 border-border/80 bg-background/60 py-0">
+                    <CardHeader className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <CardTitle className="text-base">VPS metrics</CardTitle>
+                        <CardDescription>
+                          {isLoadingVpsStatus
+                            ? "Loading real-time server usage..."
+                            : vpsStatus
+                              ? `Updated ${formatTimestamp(vpsStatus.timestamp)} - ${vpsStatus.hostname}`
+                              : "Metrics endpoint not available"}
+                        </CardDescription>
+                      </div>
+
+                      {vpsStatus ? (
+                        <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                          <div className="border border-border/70 bg-muted/30 px-2 py-1.5">
+                            <p className="text-muted-foreground">CPU</p>
+                            <p className="text-sm font-semibold text-foreground">
+                              {vpsStatus.cpu.usedPercent.toFixed(1)}%
                             </p>
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        filteredRepos.map((repo, index) => (
-                          <TableRow
-                            key={repo.fullName}
-                            className="animate-fade-up"
-                            style={{ animationDelay: `${Math.min(index, 10) * 35}ms` }}
-                          >
-                            <TableCell className="min-w-0 max-w-0 px-6 py-3 whitespace-normal">
-                              <div className="min-w-0">
-                                <p className="truncate text-base font-medium text-foreground">
-                                  {repo.name}
-                                  {repo.private ? (
-                                    <Lock className="ml-2 inline h-3.5 w-3.5 text-muted-foreground" />
-                                  ) : null}
-                                </p>
-                                <p className="truncate text-xs text-muted-foreground">
-                                  {repo.fullName}
-                                </p>
-                              </div>
-                            </TableCell>
+                          </div>
+                          <div className="border border-border/70 bg-muted/30 px-2 py-1.5">
+                            <p className="text-muted-foreground">Load</p>
+                            <p className="text-sm font-semibold text-foreground">
+                              {vpsStatus.cpu.loadAverage1m.toFixed(2)}
+                            </p>
+                          </div>
+                          <div className="border border-border/70 bg-muted/30 px-2 py-1.5">
+                            <p className="text-muted-foreground">Memory</p>
+                            <p className="text-sm font-semibold text-foreground">
+                              {vpsStatus.memory.usedPercent.toFixed(1)}%
+                            </p>
+                          </div>
+                          <div className="border border-border/70 bg-muted/30 px-2 py-1.5">
+                            <p className="text-muted-foreground">Containers</p>
+                            <p className="text-sm font-semibold text-foreground">
+                              {vpsStatus.containers.length}
+                            </p>
+                          </div>
+                        </div>
+                      ) : null}
+                    </CardHeader>
 
-                            <TableCell className="px-6 py-3">
-                              <Badge
-                                variant={repo.private ? "secondary" : "outline"}
-                                className={cn(
-                                  "uppercase",
-                                  !repo.private &&
-                                    "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                                )}
-                              >
-                                {repo.visibility}
-                              </Badge>
-                            </TableCell>
-
-                            <TableCell className="px-6 py-3 text-muted-foreground">
-                              {formatRepoDate(repo.pushedAt)}
-                            </TableCell>
-
-                            <TableCell className="px-6 py-3 text-right">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 px-4"
-                                disabled={isImportingRepo === repo.fullName}
-                                onClick={() => openImportDialog(repo)}
-                              >
-                                {isImportingRepo === repo.fullName ? "Importing..." : "Import"}
-                              </Button>
-                            </TableCell>
+                    <CardContent className="px-0 pb-0">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="px-6">Container</TableHead>
+                            <TableHead className="px-6">CPU</TableHead>
+                            <TableHead className="px-6">Memory</TableHead>
+                            <TableHead className="px-6">Network</TableHead>
                           </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
+                        </TableHeader>
+                        <TableBody>
+                          {isLoadingVpsStatus ? (
+                            <TableRow>
+                              <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
+                                Loading VPS metrics...
+                              </TableCell>
+                            </TableRow>
+                          ) : !vpsStatus ? (
+                            <TableRow>
+                              <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
+                                Could not load VPS metrics. Check `VPS_METRICS_URL` and
+                                `VPS_METRICS_TOKEN` in control-panel environment.
+                              </TableCell>
+                            </TableRow>
+                          ) : topContainers.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
+                                No running containers.
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            topContainers.map((container) => (
+                              <TableRow key={container.id}>
+                                <TableCell className="px-6 py-3 align-top whitespace-normal">
+                                  <p className="truncate font-medium text-foreground">{container.name}</p>
+                                  <p className="truncate text-xs text-muted-foreground">{container.image}</p>
+                                </TableCell>
+                                <TableCell className="px-6 py-3 text-sm text-foreground">
+                                  {container.cpuPercent.toFixed(1)}%
+                                </TableCell>
+                                <TableCell className="px-6 py-3 text-sm text-foreground whitespace-normal">
+                                  {formatBytes(container.memory.usedBytes)}
+                                  <span className="text-muted-foreground">
+                                    {` / ${formatBytes(container.memory.limitBytes)} (${container.memory.usedPercent.toFixed(1)}%)`}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="px-6 py-3 text-xs text-muted-foreground whitespace-normal">
+                                  <p>RX {formatBytes(container.network.rxBytes)}</p>
+                                  <p>TX {formatBytes(container.network.txBytes)}</p>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                  </Card>
+                </>
+              ) : null}
             </main>
           </SidebarInset>
         </SidebarProvider>
