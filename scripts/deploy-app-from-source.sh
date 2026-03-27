@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -lt 6 ] || [ "$#" -gt 7 ]; then
-  printf 'Usage: %s <app-slug> <source-owner> <source-repo> <source-ref> <compose-file-path> <internal-port> [public-service-name]\n' "$0"
+if [ "$#" -lt 6 ] || [ "$#" -gt 8 ]; then
+  printf 'Usage: %s <app-slug> <source-owner> <source-repo> <source-ref> <compose-file-path> <internal-port> [public-service-name] [env-vars-base64]\n' "$0"
   exit 1
 fi
 
@@ -13,6 +13,7 @@ SOURCE_REF="$4"
 COMPOSE_FILE_PATH="$5"
 APP_INTERNAL_PORT="$6"
 PUBLIC_SERVICE_NAME="${7:-}"
+ENV_VARS_B64="${8:-}"
 SOURCE_GITHUB_TOKEN="${SOURCE_GITHUB_TOKEN:-}"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd)"
@@ -23,6 +24,9 @@ INFRA_ENV_FILE="${BASE_DIR}/infrastructure/.env"
 UPSERT_SCRIPT="${BASE_DIR}/scripts/upsert-env.sh"
 SERVER_DEPLOY_SCRIPT="${BASE_DIR}/scripts/server-deploy.sh"
 TRAEFIK_OVERRIDE_FILE="${APP_DIR}/docker-compose.traefik.yml"
+APPLY_ENV_SCRIPT="${BASE_DIR}/scripts/apply-app-env-vars.sh"
+
+RESERVED_APP_KEYS="APP_NAME,APP_IMAGE,APP_INTERNAL_PORT,APP_DOMAIN,DEPLOY_MODE,COMPOSE_FILE,PUBLIC_SERVICE_NAME,SOURCE_REPOSITORY,SOURCE_REF"
 
 resolve_base_domain() {
   local infra_env_file="$1"
@@ -76,6 +80,11 @@ fi
 
 if [ ! -f "$UPSERT_SCRIPT" ] || [ ! -f "$SERVER_DEPLOY_SCRIPT" ]; then
   printf 'Missing required deploy scripts under %s/scripts\n' "$BASE_DIR"
+  exit 1
+fi
+
+if [ ! -f "$APPLY_ENV_SCRIPT" ]; then
+  printf 'Missing required helper script under %s\n' "$APPLY_ENV_SCRIPT"
   exit 1
 fi
 
@@ -137,6 +146,7 @@ bash "$UPSERT_SCRIPT" "${APP_DIR}/.env" COMPOSE_FILE "source-repo/${COMPOSE_FILE
 bash "$UPSERT_SCRIPT" "${APP_DIR}/.env" PUBLIC_SERVICE_NAME "$PUBLIC_SERVICE_NAME"
 bash "$UPSERT_SCRIPT" "${APP_DIR}/.env" SOURCE_REPOSITORY "${SOURCE_OWNER}/${SOURCE_REPO}"
 bash "$UPSERT_SCRIPT" "${APP_DIR}/.env" SOURCE_REF "$SOURCE_REF"
+bash "$APPLY_ENV_SCRIPT" "${APP_DIR}/.env" "$ENV_VARS_B64" "$RESERVED_APP_KEYS"
 
 cat > "$TRAEFIK_OVERRIDE_FILE" <<EOF
 services:

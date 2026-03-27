@@ -263,6 +263,7 @@ export function DashboardClient() {
   const [projectName, setProjectName] = useState("");
   const [sourceRef, setSourceRef] = useState("main");
   const [internalPort, setInternalPort] = useState("3000");
+  const [envVars, setEnvVars] = useState("");
 
   useEffect(() => {
     const loadRepos = async () => {
@@ -425,6 +426,7 @@ export function DashboardClient() {
     setProjectName(repo.name);
     setSourceRef(repo.defaultBranch || "main");
     setInternalPort("3000");
+    setEnvVars("");
     setIsDialogOpen(true);
   };
 
@@ -467,6 +469,7 @@ export function DashboardClient() {
           internalPort: port,
           sourceRepo: dialogRepo.name,
           sourceRef,
+          envVars,
         }),
       });
 
@@ -1058,6 +1061,20 @@ export function DashboardClient() {
                   inputMode="numeric"
                 />
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="env-vars">Environment Variables</Label>
+              <textarea
+                id="env-vars"
+                value={envVars}
+                onChange={(event) => setEnvVars(event.target.value)}
+                placeholder={"DB_DSN=postgres://task:task@postgres:5432/task?sslmode=disable\nREDIS_ADDR=redis:6379\nAPI_PORT=8080"}
+                className="min-h-32 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              />
+              <p className="text-xs text-muted-foreground">
+                Optional. One `KEY=VALUE` pair per line. Deploy-managed keys are reserved.
+              </p>
             </div>
           </div>
 

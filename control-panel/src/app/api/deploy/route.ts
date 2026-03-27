@@ -11,7 +11,20 @@ const deploySchema = z.object({
   internalPort: z.coerce.number().int().min(1).max(65535),
   sourceRepo: z.string().regex(/^[A-Za-z0-9_.-]+$/),
   sourceRef: z.string().min(1).max(120),
+  envVars: z.string().max(20000).optional().default(""),
 });
+
+const RESERVED_DEPLOY_ENV_KEYS = new Set([
+  "APP_NAME",
+  "APP_IMAGE",
+  "APP_INTERNAL_PORT",
+  "APP_DOMAIN",
+  "DEPLOY_MODE",
+  "COMPOSE_FILE",
+  "PUBLIC_SERVICE_NAME",
+  "SOURCE_REPOSITORY",
+  "SOURCE_REF",
+]);
 
 function firstDefinedEnv(keys: string[]) {
   for (const key of keys) {
@@ -32,6 +45,38 @@ function splitRepository(fullRepository: string) {
   }
 
   return { owner, name };
+}
+
+function normalizeEnvVars(input: string) {
+  const normalizedLines: string[] = [];
+
+  for (const rawLine of input.split(/\r?\n/)) {
+    const line = rawLine.trim();
+
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) {
+      throw new Error(`Invalid env line: ${line}. Use KEY=VALUE format.`);
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    const value = line.slice(separatorIndex + 1);
+
+    if (!/^[A-Z0-9_]+$/.test(key)) {
+      throw new Error(`Invalid env key: ${key}. Use uppercase letters, numbers, and underscores only.`);
+    }
+
+    if (RESERVED_DEPLOY_ENV_KEYS.has(key)) {
+      throw new Error(`Reserved env key cannot be set here: ${key}.`);
+    }
+
+    normalizedLines.push(`${key}=${value}`);
+  }
+
+  return normalizedLines;
 }
 
 export async function POST(request: NextRequest) {
@@ -61,6 +106,23 @@ export async function POST(request: NextRequest) {
       {
         error: "Invalid deploy payload",
         detail: parsed.error.flatten(),
+      },
+      { status: 400 }
+    );
+  }
+
+  let envVarsBase64 = "";
+
+  try {
+    const normalizedEnvVars = normalizeEnvVars(parsed.data.envVars);
+    if (normalizedEnvVars.length > 0) {
+      envVarsBase64 = Buffer.from(normalizedEnvVars.join("\n"), "utf8").toString("base64");
+    }
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: "Invalid environment variables",
+        detail: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 400 }
     );
@@ -147,6 +209,7 @@ export async function POST(request: NextRequest) {
           source_repo: parsed.data.sourceRepo,
           source_ref: parsed.data.sourceRef,
           internal_port: String(parsed.data.internalPort),
+          env_vars_base64: envVarsBase64,
         },
       }),
     }

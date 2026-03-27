@@ -23,6 +23,10 @@ on:
         description: "App internal container port"
         required: true
         type: string
+      env_vars_base64:
+        description: "Optional base64 encoded KEY=VALUE env lines"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -44,6 +48,7 @@ jobs:
       SOURCE_REPO: ${{ inputs.source_repo }}
       SOURCE_REF: ${{ inputs.source_ref }}
       INTERNAL_PORT: ${{ inputs.internal_port }}
+      ENV_VARS_BASE64: ${{ inputs.env_vars_base64 }}
     steps:
       - name: Validate workflow inputs
         shell: bash
@@ -185,7 +190,7 @@ jobs:
             exit 1
           fi
 
-          export APP_SLUG APP_IMAGE INTERNAL_PORT DEPLOY_STRATEGY COMPOSE_FILE_PATH PUBLIC_SERVICE_NAME SOURCE_OWNER SOURCE_REPO SOURCE_REF SOURCE_GITHUB_TOKEN
+          export APP_SLUG APP_IMAGE INTERNAL_PORT DEPLOY_STRATEGY COMPOSE_FILE_PATH PUBLIC_SERVICE_NAME SOURCE_OWNER SOURCE_REPO SOURCE_REF SOURCE_GITHUB_TOKEN ENV_VARS_BASE64
 
           SSM_PARAMETERS="$(python3 <<'PY'
           import json
@@ -197,6 +202,7 @@ jobs:
           app_image = os.environ.get("APP_IMAGE", "")
           compose_file_path = os.environ.get("COMPOSE_FILE_PATH", "")
           public_service_name = os.environ.get("PUBLIC_SERVICE_NAME", "")
+          env_vars_base64 = os.environ.get("ENV_VARS_BASE64", "")
           source_owner = os.environ["SOURCE_OWNER"]
           source_repo = os.environ["SOURCE_REPO"]
           source_ref = os.environ["SOURCE_REF"]
@@ -216,11 +222,11 @@ jobs:
 
           if deploy_strategy == "compose":
               commands.append(
-                  f'''SOURCE_GITHUB_TOKEN_VALUE=$(printf '%s' '{source_github_token_b64}' | base64 -d); su - "$DEPLOY_USER" -c "SOURCE_GITHUB_TOKEN=\"$SOURCE_GITHUB_TOKEN_VALUE\" bash \"$DEPLOY_DIR/scripts/deploy-app-from-source.sh\" {app_slug!r} {source_owner!r} {source_repo!r} {source_ref!r} {compose_file_path!r} {internal_port!r} {public_service_name!r}"'''
+                  f'''SOURCE_GITHUB_TOKEN_VALUE=$(printf '%s' '{source_github_token_b64}' | base64 -d); su - "$DEPLOY_USER" -c "SOURCE_GITHUB_TOKEN=\"$SOURCE_GITHUB_TOKEN_VALUE\" bash \"$DEPLOY_DIR/scripts/deploy-app-from-source.sh\" {app_slug!r} {source_owner!r} {source_repo!r} {source_ref!r} {compose_file_path!r} {internal_port!r} {public_service_name!r} {env_vars_base64!r}"'''
               )
           else:
               commands.append(
-                  f'''su - "$DEPLOY_USER" -c "bash \"$DEPLOY_DIR/scripts/deploy-app-from-image.sh\" {app_slug!r} {app_image!r} {internal_port!r}"'''
+                  f'''su - "$DEPLOY_USER" -c "bash \"$DEPLOY_DIR/scripts/deploy-app-from-image.sh\" {app_slug!r} {app_image!r} {internal_port!r} {env_vars_base64!r}"'''
               )
 
           print(json.dumps({"commands": commands}))

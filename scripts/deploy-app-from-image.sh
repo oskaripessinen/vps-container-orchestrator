@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 3 ]; then
-  printf 'Usage: %s <app-slug> <ghcr-image-with-tag> <internal-port>\n' "$0"
+if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then
+  printf 'Usage: %s <app-slug> <ghcr-image-with-tag> <internal-port> [env-vars-base64]\n' "$0"
   exit 1
 fi
 
 APP_SLUG="$1"
 APP_IMAGE="$2"
 APP_INTERNAL_PORT="$3"
+ENV_VARS_B64="${4:-}"
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd)"
 BASE_DIR="${DEPLOY_HUB_DIR:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 APP_DIR="${BASE_DIR}/apps/${APP_SLUG}"
 INFRA_ENV_FILE="${BASE_DIR}/infrastructure/.env"
 UPSERT_SCRIPT="${BASE_DIR}/scripts/upsert-env.sh"
+APPLY_ENV_SCRIPT="${BASE_DIR}/scripts/apply-app-env-vars.sh"
+
+RESERVED_APP_KEYS="APP_NAME,APP_IMAGE,APP_INTERNAL_PORT,APP_DOMAIN,DEPLOY_MODE,COMPOSE_FILE,PUBLIC_SERVICE_NAME,SOURCE_REPOSITORY,SOURCE_REF"
 
 resolve_base_domain() {
   local infra_env_file="$1"
@@ -70,6 +74,11 @@ if [ ! -f "$UPSERT_SCRIPT" ]; then
   exit 1
 fi
 
+if [ ! -f "$APPLY_ENV_SCRIPT" ]; then
+  printf 'Missing helper script under %s\n' "$APPLY_ENV_SCRIPT"
+  exit 1
+fi
+
 if [ ! -d "$APP_DIR" ]; then
   bash "${BASE_DIR}/scripts/create-app.sh" "$APP_SLUG" "$APP_IMAGE" "$APP_INTERNAL_PORT"
 else
@@ -92,5 +101,7 @@ else
   sync_traefik_template "$APP_DIR"
   printf 'Updated app env: %s/.env\n' "$APP_DIR"
 fi
+
+bash "$APPLY_ENV_SCRIPT" "${APP_DIR}/.env" "$ENV_VARS_B64" "$RESERVED_APP_KEYS"
 
 bash "${BASE_DIR}/scripts/server-deploy.sh" "$APP_SLUG"
