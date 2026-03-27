@@ -1,168 +1,119 @@
 # AGENTS.md
 
-Operational guide for coding agents working in `vps-container-orchestrator`.
-This repository is infrastructure-first: Bash scripts, Docker Compose, and Terraform.
+Guide for coding agents working in `vps-container-orchestrator`.
 
-## Scope and goals
-- Manage shared VPS infrastructure in `infrastructure/`.
-- Create and deploy per-app Compose stacks in `apps/<app-slug>/`.
-- Provision AWS bootstrap resources in `terraform/aws/`.
-- Keep changes safe, reproducible, and automation-friendly.
+## What this repo is
+- Docker Compose based VPS deploy hub for backend apps.
+- Shared infrastructure lives in `infrastructure/`.
+- Per-app stacks live in `apps/<app-slug>/`.
+- AWS bootstrap lives in `terraform/aws/`.
+- `control-panel/` is the current app UI: a Next.js dashboard for authenticated GitHub-based deploys and VPS metrics.
 
 ## Repository map
-- `scripts/create-app.sh`: scaffolds `apps/<app-slug>` from template.
-- `scripts/server-deploy.sh`: pulls image and restarts one app stack.
-- `apps/_template/docker-compose.yml`: baseline app service definition.
-- `infrastructure/docker-compose.yml`: Nginx Proxy Manager + Watchtower.
-- `terraform/aws/*.tf`: EC2, SG, EIP, variables, outputs.
-- `control-panel/`: Next.js + shadcn admin UI for GHCR listing and deploy dispatch.
-- `templates/backend-repo/.github/workflows/deploy.yml`: backend CI deploy template.
-- `docs/new-backend-flow.md`: deployment flow reference.
+- `infrastructure/docker-compose.yml`: shared services (`nginx-proxy-manager`, `watchtower`, `vps-metrics-api`).
+- `infrastructure/vps-metrics-api/`: lightweight API used by `control-panel` for live host and container stats.
+- `apps/_template/`: template used when creating a new app stack.
+- `scripts/create-app.sh`: creates `apps/<app-slug>` from template and writes `.env`.
+- `scripts/server-deploy.sh`: deploys one existing app with `docker compose pull` and `up -d`.
+- `scripts/deploy-app-from-image.sh`: create-or-update flow used by UI-triggered deploys.
+- `.github/workflows/deploy-orchestrator.yml`: deploy shared infra to EC2 through AWS SSM.
+- `.github/workflows/deploy-app-from-ui.yml`: build source repo image, push to GHCR, then deploy through AWS SSM.
+- `templates/backend-repo/.github/workflows/deploy.yml`: backend repo workflow template for push-to-deploy.
+- `control-panel/`: Next.js 16 + React 19 + Clerk app router dashboard.
+- `docs/new-backend-flow.md`: backend onboarding flow.
+- `docs/vps-metrics-api.md`: metrics API setup and proxying.
 
-## Tooling baseline
-- Bash (`#!/usr/bin/env bash`).
-- Docker with Compose v2 plugin (`docker compose`).
-- Terraform >= `1.6.0` with AWS provider `~> 5.0`.
-- Node.js 20+ and npm for `control-panel/`.
-- Recommended local tools: `shellcheck`, `shfmt`.
+## Main workflows
 
-## Build, lint, test, and validation commands
-Run commands from repository root unless noted otherwise.
+### Shared infrastructure
+- Copy `infrastructure/.env.example` to `infrastructure/.env`.
+- Start or refresh with `docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d`.
+- The shared Docker network name must stay `vps-container-orchestrator`.
 
-### Environment bootstrap
-- `cp infrastructure/.env.example infrastructure/.env`
-- `docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d`
+### Per-app deploys
+- Create an app once with `bash scripts/create-app.sh <app-slug> <ghcr-image> <internal-port>`.
+- Deploy an existing app with `bash scripts/server-deploy.sh <app-slug>`.
+- UI-triggered deploys use `bash scripts/deploy-app-from-image.sh <app-slug> <ghcr-image-with-tag> <internal-port>` on the server.
 
-### Compose validation and deploy
-- Validate shared infra compose: `docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env config`
-- Create one app definition: `bash scripts/create-app.sh <app-slug> <ghcr-image> <internal-port>`
-- Deploy one app: `bash scripts/server-deploy.sh <app-slug>`
-- Validate one app compose file: `docker compose --env-file apps/<app-slug>/.env -f apps/<app-slug>/docker-compose.yml config`
+### Control panel
+- Auth is handled with Clerk.
+- Dashboard currently focuses on repository import + deploy workflow dispatch + VPS metrics.
+- Important API routes live under `control-panel/src/app/api/`:
+  - `deploy`
+  - `github/repos`
+  - `ghcr/packages`
+  - `ghcr/tags`
+  - `vps/status`
 
-### Shell scripts (`scripts/*.sh`)
-- Lint all scripts: `shellcheck scripts/*.sh`
-- Lint one script (single-test equivalent): `shellcheck scripts/server-deploy.sh`
-- Syntax check all scripts: `bash -n scripts/create-app.sh && bash -n scripts/server-deploy.sh`
-- Syntax check one script (single-test equivalent): `bash -n scripts/create-app.sh`
-- Format scripts (if installed): `shfmt -w scripts/*.sh`
+## Validation commands
 
-### Terraform (`terraform/aws`)
-Run these commands from `terraform/aws`.
-- Initialize: `terraform init`
-- Format all files: `terraform fmt -recursive`
-- Check formatting (CI style): `terraform fmt -check -recursive`
-- Check one file (single-test equivalent): `terraform fmt -check main.tf`
-- Validate configuration: `terraform validate`
-- Plan infra changes: `terraform plan`
-- Apply infra changes: `terraform apply`
+### Bash scripts
+- `shellcheck scripts/*.sh`
+- `bash -n scripts/create-app.sh && bash -n scripts/server-deploy.sh && bash -n scripts/deploy-app-from-image.sh`
 
-### Control panel (`control-panel`)
-Run these commands from `control-panel`.
-- Install dependencies: `npm install`
-- Dev server: `npm run dev`
-- Lint: `npm run lint`
-- Build (type + production checks): `npm run build`
-- Start production build: `npm run start`
+### Docker Compose
+- Shared infra: `docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env config`
+- App template / app stack: `docker compose --env-file apps/<app-slug>/.env -f apps/<app-slug>/docker-compose.yml config`
 
-### Test strategy status
-- There is no dedicated unit/integration test suite in this repository today.
-- Use these checks as merge gates:
-  - `shellcheck` and `bash -n` for script changes
-  - `docker compose ... config` for Compose changes
-  - `terraform fmt -check` and `terraform validate` (plus `terraform plan` for infra updates)
-  - `npm run lint` and `npm run build` for `control-panel` changes
+### Terraform
+Run from `terraform/aws`.
+- `terraform fmt -check -recursive`
+- `terraform validate`
+- `terraform plan`
 
-### Change validation matrix
-- If you change only `scripts/create-app.sh`:
-  - `shellcheck scripts/create-app.sh`
-  - `bash -n scripts/create-app.sh`
-- If you change only `scripts/server-deploy.sh`:
-  - `shellcheck scripts/server-deploy.sh`
-  - `bash -n scripts/server-deploy.sh`
-- If you change only `infrastructure/docker-compose.yml`:
-  - `docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env config`
-- If you change only `apps/_template/docker-compose.yml`:
-  - create/inspect a generated app and run `docker compose --env-file apps/<app-slug>/.env -f apps/<app-slug>/docker-compose.yml config`
-- If you change Terraform files in `terraform/aws`:
-  - `terraform fmt -check -recursive`
-  - `terraform validate`
-  - `terraform plan` when behavior changes
-- If you change `control-panel/**`:
-  - `npm run lint`
-  - `npm run build`
+### Control panel
+Run from `control-panel`.
+- `npm install`
+- `npm run lint`
+- `npm run build`
 
-### Deploy workflow invariants
-- Deploys target one app slug at a time via `bash scripts/server-deploy.sh <app-slug>`.
-- Keep `watchtower` label-based updates enabled for app services.
-- Preserve the shared network contract name: `vps-container-orchestrator`.
-- In deploy workflow templates, keep `script_stop: true` for SSH deploy reliability.
+## Change checklist
+- If you edit `scripts/**`, run shell checks and syntax checks.
+- If you edit `infrastructure/**`, run Compose validation.
+- If you edit `apps/_template/**`, validate a generated or existing app Compose file.
+- If you edit `terraform/aws/**`, run `terraform fmt -check -recursive` and `terraform validate`.
+- If you edit `control-panel/**`, run `npm run lint` and `npm run build` in `control-panel`.
 
-## Code style and conventions
+## Conventions
 
 ### General
-- Keep diffs minimal and scoped; avoid unrelated refactors.
-- Prefer explicit, readable commands over dense one-liners.
-- Never commit secrets (`.env` files are gitignored by design).
-- Preserve existing folder layout and naming patterns.
+- Keep diffs small and scoped.
+- Do not commit secrets or copy real `.env` values into docs, code, logs, or tests.
+- Preserve the current folder layout and deployment flow unless the task explicitly changes them.
 
-### Bash style
-- Include `#!/usr/bin/env bash` and `set -euo pipefail`.
-- Validate argument counts early and print usage on failure.
-- Use uppercase variable names for script-level values (`APP_SLUG`, `APP_DIR`).
-- Quote variable expansions and paths (`"$VAR"`).
+### Bash
+- Use `#!/usr/bin/env bash` and `set -euo pipefail`.
+- Validate inputs early.
+- Prefer uppercase variable names.
+- Quote all paths and expansions.
 - Use `printf` for user-facing output.
-- Check preconditions (`-f`, `-e`, directory existence) before side effects.
-- Exit non-zero on invalid inputs and missing prerequisites.
 
-### Terraform style
-- Use snake_case for variables, locals, outputs, and resources.
-- Define `description` and `type` for every variable; provide `default` when sensible.
-- Add `validation` blocks for safety-critical or user-provided inputs.
-- Prefer locals for derived values (for example `selected_ami_id`).
-- Keep shared tags merged with `merge(var.tags, {...})`.
-- Keep provider/version constraints explicit in `versions.tf`.
+### Compose
+- Use 2-space indentation.
+- Keep service names and network contract stable.
+- Prefer env-driven values like `${APP_IMAGE}` and `${APP_INTERNAL_PORT}`.
+- Keep long-running services on `restart: unless-stopped` unless there is a clear reason not to.
+
+### Terraform
+- Use snake_case.
+- Keep variable `description` and `type` explicit.
+- Add validation for risky user inputs.
 - Run `terraform fmt` after edits.
 
-### YAML/Compose style
-- Use 2-space indentation; never use tabs.
-- Keep service names descriptive and stable (`nginx-proxy-manager`, `watchtower`, `backend`).
-- Use env substitution for deploy-time values (`${APP_IMAGE}`, `${APP_INTERNAL_PORT}`).
-- Keep shared network name stable: `vps-container-orchestrator`.
-- Prefer `restart: unless-stopped` for long-running services.
+### Next.js / TypeScript (`control-panel`)
+- Prefer strict typing and avoid `any`.
+- Keep server components by default; use client components only when state or browser APIs are needed.
+- Validate API inputs explicitly with `zod`.
+- Return structured errors from route handlers.
 
-### Naming conventions
-- App directory: `apps/<app-slug>` with lowercase kebab-case slug.
-- Env vars: uppercase snake_case (`WATCHTOWER_INTERVAL`, `APP_INTERNAL_PORT`).
-- Terraform identifiers: snake_case.
-- Script files: kebab-case with action verbs (`create-app.sh`, `server-deploy.sh`).
+## Operational guardrails
+- Do not rename the shared Docker network without a coordinated migration.
+- Keep Watchtower label-based updates enabled for app services.
+- Keep `script_stop: true` in SSH-based deploy templates.
+- Keep `admin_cidrs` restricted; avoid broad exposure unless the task explicitly requires it.
+- Prefer backward-compatible changes unless a breaking change is intentional and documented.
 
-### TypeScript/Next.js style (`control-panel`)
-- Prefer TypeScript with strict typing; avoid `any` except for unavoidable third-party gaps.
-- Keep imports grouped as framework/third-party first, local aliases (`@/...`) second.
-- Keep React components small and composed; prefer server components unless client state is needed.
-- Keep API route validation explicit (for example with `zod`) and return structured errors.
-- Use `npm run lint` and `npm run build` before merge.
-
-### Error handling expectations
-- Fail fast on invalid args, missing files, and failed external commands.
-- Emit actionable errors that include what is missing and where.
-- Avoid silent fallbacks that can hide deploy/provision failures.
-- For potentially destructive actions, require explicit operator intent and clear logs.
-
-## Security and operational guardrails
-- Never commit or print sensitive values from `.env` files or CI secrets.
-- Keep `admin_cidrs` restricted; avoid `0.0.0.0/0` unless explicitly required.
-- Preserve `script_stop: true` behavior in SSH-based deploy workflow variants.
-- Do not rename the shared Docker network without coordinated migration.
-
-## Cursor and Copilot rules
-- `.cursorrules`: not present
-- `.cursor/rules/`: not present
-- `.github/copilot-instructions.md`: not present
-- If these files are added, treat them as higher-priority instructions and update this doc.
-
-## PR-ready checklist for agents
-- Run relevant validation commands for all changed files.
-- Include exact commands run in your handoff or PR description.
-- Call out any command you could not run and why.
-- Keep behavior backward compatible unless a breaking change is intentional.
+## Handoff expectations
+- Run the relevant validation commands for the files you changed.
+- Report exactly which commands you ran.
+- If you could not run something, say what was skipped and why.

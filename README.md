@@ -1,82 +1,84 @@
 # vps-container-orchestrator
 
-Centralized pattern for deploying backend services on a single VPS with Docker Compose.
+A practical deploy hub for running multiple backend apps on one VPS with Docker Compose.
 
-- Infrastructure stack is run once (Nginx Proxy Manager + Watchtower)
-- Each backend runs in its own `apps/<app-slug>` directory
-- Deploys happen via GitHub Actions on push, with Watchtower as fallback
-- Optional `control-panel/` Next.js UI can trigger build+deploy from selected Git repositories
+This repo gives you:
+- one shared infrastructure stack (`nginx-proxy-manager`, `watchtower`, optional `vps-metrics-api`)
+- one folder per deployed app under `apps/<app-slug>/`
+- scripts for creating and deploying app stacks
+- optional AWS bootstrap with Terraform
+- an optional `control-panel/` app for authenticated GitHub-triggered deploys and live VPS metrics
 
-## Directory structure
+## How it works
+
+There are two layers in this repo:
+
+1. Shared infrastructure in `infrastructure/`
+   - runs once on the VPS
+   - provides reverse proxy, automatic image watching, and optional metrics API
+
+2. Per-app stacks in `apps/<app-slug>/`
+   - each backend gets its own Compose file and `.env`
+   - deploys pull the latest image and restart that app only
+
+Typical flow:
+- bring up shared infrastructure once
+- create a new app folder with `scripts/create-app.sh`
+- point Nginx Proxy Manager to that app
+- deploy updates with GitHub Actions or from `control-panel`
+
+## Repository structure
 
 ```text
-deploy-hub/
+.
 ├── infrastructure/
 │   ├── docker-compose.yml
-│   └── .env
+│   └── vps-metrics-api/
 ├── apps/
-│   ├── _template/
-│   │   ├── docker-compose.yml
-│   │   └── .env.example
-│   └── <app-slug>/
-│       ├── docker-compose.yml
-│       └── .env
+│   └── _template/
 ├── scripts/
 │   ├── create-app.sh
-│   └── server-deploy.sh
+│   ├── server-deploy.sh
+│   └── deploy-app-from-image.sh
 ├── templates/
 │   └── backend-repo/.github/workflows/deploy.yml
+├── .github/workflows/
+│   ├── deploy-orchestrator.yml
+│   └── deploy-app-from-ui.yml
 ├── control-panel/
-│   ├── src/
-│   ├── .env.example
-│   └── README.md
 ├── docs/
-│   └── new-backend-flow.md
-└── terraform/
-    └── aws/
+└── terraform/aws/
 ```
 
-## Control panel (optional)
+## Quick start
 
-The `control-panel/` app provides a web UI for authenticated users to import a repository,
-build an image, and dispatch deploy workflow `deploy-app-from-ui.yml`.
+### 1. Clone repo to the server
 
-- Start from `control-panel/README.md` for setup and required environment variables.
-- End users do not provide deploy tokens; one server-side deploy credential is configured in control-panel env.
-
-The shared Docker network is fixed:
-
-- `vps-container-orchestrator`
-
-## How deploy works (when adding a new backend)
-
-1. Create the app on the server with `scripts/create-app.sh`.
-2. Add a workflow to the backend repo from `templates/backend-repo/.github/workflows/deploy.yml`.
-3. Push to the `main` branch in the backend repo.
-4. The workflow builds the image and pushes it to GHCR (`latest` + `sha`).
-5. The workflow SSHs to the VPS and runs `scripts/server-deploy.sh <app-slug>`.
-6. The server runs `docker compose pull && docker compose up -d`.
-7. Watchtower updates labeled containers as a fallback on its interval.
-
-## 1) Initial server setup
-
-Run the following commands on the VPS (for example in `/home/ubuntu/deploy-hub`):
+Example target directory:
 
 ```bash
 git clone <this-repo-url> /home/ubuntu/deploy-hub
 cd /home/ubuntu/deploy-hub
+```
+
+### 2. Start shared infrastructure
+
+```bash
 cp infrastructure/.env.example infrastructure/.env
 docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d
 ```
 
-Then open Nginx Proxy Manager:
+If you want live VPS metrics in `control-panel`, set `METRICS_API_TOKEN` in `infrastructure/.env` before starting.
 
-- `http://<server-ip>:81`
+### 3. Open Nginx Proxy Manager
 
-## 2) Add a new backend on the server
+- URL: `http://<server-ip>:81`
+
+## Add a new backend app
+
+Create the app stack on the server:
 
 ```bash
-cd /home/ubuntu/deploy-hub
 bash scripts/create-app.sh <app-slug> <ghcr-image> <internal-port>
 ```
 
@@ -87,39 +89,77 @@ bash scripts/create-app.sh project-a ghcr.io/your-org/project-a:latest 3000
 ```
 
 This creates:
+- `apps/<app-slug>/docker-compose.yml`
+- `apps/<app-slug>/.env`
 
-- `apps/project-a/docker-compose.yml`
-- `apps/project-a/.env`
-
-First manual deploy:
+Run the first deploy:
 
 ```bash
-bash scripts/server-deploy.sh project-a
+bash scripts/server-deploy.sh <app-slug>
 ```
 
-## 3) GitHub secrets in the backend repo
+## Reverse proxy setup
 
-Add at least these secrets to the backend repository:
+In Nginx Proxy Manager, create a Proxy Host for the app:
 
-- `SSH_HOST` (VPS IP or DNS)
-- `SSH_USER` (for example `ubuntu`)
-- `SSH_PRIVATE_KEY` (private key used to log in to the VPS)
-- `APP_SLUG` (for example `project-a`)
-- `GHCR_READ_TOKEN` (only if the image is private, scope `read:packages`)
+- Domain Names: your app domain
+- Forward Hostname / IP: `APP_NAME` from `apps/<app-slug>/.env`
+- Forward Port: `APP_INTERNAL_PORT` from `apps/<app-slug>/.env`
 
-## 4) Nginx Proxy Manager for the app
+Then enable SSL in the NPM UI.
 
-Create a new Proxy Host:
+## Deploy options
 
-- Domain Names: app domain
-- Forward Hostname / IP: `APP_NAME` (from the app `.env`)
-- Forward Port: `APP_INTERNAL_PORT`
+### Option 1: backend repo pushes deploy directly
 
-Enable SSL in the NPM UI.
+Use the template at `templates/backend-repo/.github/workflows/deploy.yml` in the backend repository.
 
-## 5) Terraform (AWS) bootstrap
+What happens on push to `main`:
+- GitHub Actions builds the image
+- pushes it to GHCR
+- SSHs to the VPS
+- runs `bash /home/<user>/deploy-hub/scripts/server-deploy.sh <app-slug>`
 
-If you want to provision an EC2 instance with code:
+Backend repo secrets you usually need:
+- `SSH_HOST`
+- `SSH_USER`
+- `SSH_PRIVATE_KEY`
+- `APP_SLUG`
+- `GHCR_READ_TOKEN` if the image is private
+
+### Option 2: deploy from `control-panel`
+
+`control-panel/` is a Next.js dashboard that lets authenticated users:
+- browse accessible GitHub repositories
+- trigger build + deploy workflow dispatch
+- view live VPS and container metrics
+
+The UI-triggered workflow is `.github/workflows/deploy-app-from-ui.yml`.
+
+That flow:
+- checks out the selected source repository
+- builds and pushes a tagged GHCR image
+- connects to EC2 through AWS SSM
+- runs `scripts/deploy-app-from-image.sh` on the server
+
+Start with `control-panel/README.md` if you want to use the dashboard.
+
+## Shared infrastructure services
+
+`infrastructure/docker-compose.yml` currently includes:
+- `nginx-proxy-manager`
+- `watchtower`
+- `vps-metrics-api`
+
+The shared Docker network name is fixed:
+
+- `vps-container-orchestrator`
+
+Do not rename that network unless you also migrate app stacks and infra together.
+
+## Terraform bootstrap
+
+If you want to provision the VPS host in AWS:
 
 ```bash
 cd terraform/aws
@@ -129,24 +169,31 @@ terraform plan
 terraform apply
 ```
 
-Important:
+Important notes:
+- keep `admin_cidrs` restricted to your own IPs
+- `vpc_id`, `subnet_id`, and `key_name` must already exist
+- user data installs Docker Engine and the Docker Compose plugin
 
-- Restrict `admin_cidrs` to your own IP address (SSH 22 and NPM UI 81)
-- `vpc_id`, `subnet_id`, and `key_name` must exist before apply
-
-Terraform creates:
-
-- EC2 instance
-- Security Group for ports 22/80/443/81
-- Elastic IP
-- User data setup for Docker and Docker Compose plugin
+After provisioning, clone this repository to `/home/<deploy_user>/deploy-hub` on the instance.
 
 ## Useful commands
 
-Bring infrastructure stack up:
+Start or refresh shared infrastructure:
 
 ```bash
 docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d
+```
+
+Validate shared infrastructure Compose:
+
+```bash
+docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env config
+```
+
+Validate one app stack:
+
+```bash
+docker compose --env-file apps/<app-slug>/.env -f apps/<app-slug>/docker-compose.yml config
 ```
 
 Deploy one app:
@@ -155,8 +202,16 @@ Deploy one app:
 bash scripts/server-deploy.sh <app-slug>
 ```
 
-List containers:
+Check Bash scripts:
 
 ```bash
-docker ps
+shellcheck scripts/*.sh
+bash -n scripts/create-app.sh && bash -n scripts/server-deploy.sh && bash -n scripts/deploy-app-from-image.sh
 ```
+
+## Extra docs
+
+- `control-panel/README.md`: control panel setup
+- `docs/new-backend-flow.md`: backend onboarding flow
+- `docs/vps-metrics-api.md`: metrics API setup
+- `terraform/aws/README.md`: AWS bootstrap notes

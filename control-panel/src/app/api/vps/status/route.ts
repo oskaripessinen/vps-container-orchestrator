@@ -1,12 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import * as os from "node:os";
 
 export const runtime = "nodejs";
-
-function toGiB(bytes: number) {
-  return bytes / (1024 ** 3);
-}
 
 export async function GET() {
   const { userId } = await auth();
@@ -15,21 +10,58 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const totalMem = os.totalmem();
-  const freeMem = os.freemem();
-  const usedMem = Math.max(totalMem - freeMem, 0);
-  const usedPercent = totalMem > 0 ? Math.round((usedMem / totalMem) * 100) : 0;
-  const [loadAverage1m] = os.loadavg();
+  const endpoint = process.env.VPS_METRICS_URL?.trim();
+  const token = process.env.VPS_METRICS_TOKEN?.trim();
 
-  return NextResponse.json({
-    hostname: os.hostname(),
-    uptimeSeconds: Math.floor(os.uptime()),
-    loadAverage1m: Number(loadAverage1m.toFixed(2)),
-    memory: {
-      usedPercent,
-      usedGb: Number(toGiB(usedMem).toFixed(1)),
-      totalGb: Number(toGiB(totalMem).toFixed(1)),
-    },
-    timestamp: new Date().toISOString(),
-  });
+  if (!endpoint || !token) {
+    return NextResponse.json(
+      {
+        error:
+          "Missing VPS metrics configuration. Set VPS_METRICS_URL and VPS_METRICS_TOKEN.",
+      },
+      { status: 500 }
+    );
+  }
+
+  const timeoutMs = Number(process.env.VPS_METRICS_TIMEOUT_MS ?? "6000");
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    controller.abort();
+  }, Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 6000);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      return NextResponse.json(
+        {
+          error: "Failed to fetch VPS metrics",
+          detail,
+        },
+        { status: 502 }
+      );
+    }
+
+    const payload = await response.json();
+    return NextResponse.json(payload);
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: "VPS metrics endpoint unreachable",
+        detail: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 502 }
+    );
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }

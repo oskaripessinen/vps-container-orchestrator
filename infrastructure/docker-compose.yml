@@ -31,6 +31,23 @@ services:
     networks:
       - shared-network
 
+  vps-metrics-api:
+    build:
+      context: ./vps-metrics-api
+    container_name: vps-metrics-api
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-UTC}
+      - PORT=8787
+      - METRICS_API_TOKEN=${METRICS_API_TOKEN}
+      - METRICS_CACHE_MS=${METRICS_CACHE_MS:-2000}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    networks:
+      - shared-network
+
 networks:
   shared-network:
     name: vps-container-orchestrator

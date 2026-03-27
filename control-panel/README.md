@@ -38,6 +38,12 @@ Optional (defaults shown):
 
 - `DEPLOY_WORKFLOW_FILE` (`deploy-app-from-ui.yml`)
 - `DEPLOY_WORKFLOW_REF` (`main`)
+- `VPS_METRICS_TIMEOUT_MS` (`6000`)
+
+Required for VPS/container live metrics section:
+
+- `VPS_METRICS_URL` (for example `https://metrics.example.com/api/v1/stats`)
+- `VPS_METRICS_TOKEN` (must match `METRICS_API_TOKEN` on VPS)
 
 Example:
 
@@ -49,6 +55,8 @@ DEPLOY_REPOSITORY=your-org-or-user/vps-container-orchestrator
 DEPLOY_GITHUB_TOKEN=github_pat_or_app_token_with_workflow_dispatch_access
 DEPLOY_WORKFLOW_FILE=deploy-app-from-ui.yml
 DEPLOY_WORKFLOW_REF=main
+VPS_METRICS_URL=https://metrics.example.com/api/v1/stats
+VPS_METRICS_TOKEN=your-strong-random-token
 ```
 
 ## Token model
@@ -100,3 +108,13 @@ with these inputs:
 The workflow checks out the selected source repository, builds and pushes a GHCR image,
 then runs AWS SSM command on the target EC2 instance and calls
 `scripts/deploy-app-from-image.sh`.
+
+## VPS metrics API
+
+The dashboard reads live host + container usage via `GET /api/vps/status`, which proxies to a VPS endpoint.
+
+VPS endpoint is served by `infrastructure/vps-metrics-api`:
+
+- endpoint: `GET /api/v1/stats`
+- auth: `Authorization: Bearer <METRICS_API_TOKEN>`
+- data: host CPU/memory/load/uptime + per-container CPU/memory/network/pids

@@ -51,6 +51,8 @@ import {
 import {
   Table,
   TableBody,
+  TableHead,
+  TableHeader,
   TableCell,
   TableRow,
 } from "@/components/ui/table";
@@ -72,14 +74,40 @@ type DeployFeedback = {
 };
 
 type VpsStatus = {
+  timestamp: string;
   hostname: string;
   uptimeSeconds: number;
-  loadAverage1m: number;
+  cpu: {
+    cores: number;
+    usedPercent: number;
+    loadAverage1m: number;
+  };
   memory: {
+    totalBytes: number;
+    usedBytes: number;
+    availableBytes: number;
     usedPercent: number;
     usedGb: number;
     totalGb: number;
   };
+  containers: Array<{
+    id: string;
+    name: string;
+    image: string;
+    state: string;
+    status: string;
+    cpuPercent: number;
+    memory: {
+      usedBytes: number;
+      limitBytes: number;
+      usedPercent: number;
+    };
+    network: {
+      rxBytes: number;
+      txBytes: number;
+    };
+    pids: number;
+  }>;
 };
 
 const NAV_ITEMS = [
@@ -167,6 +195,32 @@ function formatUptime(seconds: number) {
   return `${Math.max(1, mins)}m`;
 }
 
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** exponent;
+
+  return `${value.toFixed(value >= 10 || exponent === 0 ? 0 : 1)} ${units[exponent]}`;
+}
+
+function formatTimestamp(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "unknown";
+  }
+
+  return new Intl.DateTimeFormat("fi-FI", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date);
+}
+
 export function DashboardClient() {
   const [repos, setRepos] = useState<SourceRepo[]>([]);
   const [githubLogin, setGithubLogin] = useState<string>("github-user");
@@ -213,29 +267,56 @@ export function DashboardClient() {
       }
     };
 
-    const loadVpsStatus = async () => {
-      setIsLoadingVpsStatus(true);
+    void loadRepos();
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadVpsStatus = async (initialLoad = false) => {
+      if (initialLoad) {
+        setIsLoadingVpsStatus(true);
+      }
 
       try {
         const response = await fetch("/api/vps/status", { cache: "no-store" });
         const data = (await response.json()) as VpsStatus & {
           error?: string;
+          detail?: string;
         };
 
         if (!response.ok) {
-          throw new Error(data.error || "Failed to load VPS status");
+          throw new Error(data.detail || data.error || "Failed to load VPS status");
+        }
+
+        if (!isMounted) {
+          return;
         }
 
         setVpsStatus(data);
       } catch {
+        if (!isMounted) {
+          return;
+        }
+
         setVpsStatus(null);
       } finally {
-        setIsLoadingVpsStatus(false);
+        if (initialLoad && isMounted) {
+          setIsLoadingVpsStatus(false);
+        }
       }
     };
 
-    void loadRepos();
-    void loadVpsStatus();
+    void loadVpsStatus(true);
+
+    const pollHandle = setInterval(() => {
+      void loadVpsStatus();
+    }, 10000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(pollHandle);
+    };
   }, []);
 
   const filteredRepos = useMemo(() => {
@@ -252,6 +333,14 @@ export function DashboardClient() {
       );
     });
   }, [repos, searchTerm]);
+
+  const topContainers = useMemo(() => {
+    if (!vpsStatus) {
+      return [];
+    }
+
+    return vpsStatus.containers.slice(0, 8);
+  }, [vpsStatus]);
 
   const slugPreview = slugifyRepoName(projectName || dialogRepo?.name || "");
 
@@ -403,7 +492,7 @@ export function DashboardClient() {
                       {isLoadingVpsStatus
                         ? "..."
                         : vpsStatus
-                          ? `${vpsStatus.loadAverage1m.toFixed(2)} / ${vpsStatus.memory.usedPercent}%`
+                          ? `${vpsStatus.cpu.loadAverage1m.toFixed(2)} / ${vpsStatus.memory.usedPercent}%`
                           : "n/a"}
                     </p>
                   </CardContent>
@@ -464,7 +553,108 @@ export function DashboardClient() {
                 </Alert>
               )}
 
-              <Card className="animate-fade-up animation-delay-150 min-h-0 flex-1 gap-0 overflow-hidden border-border/80 bg-background/60 py-0">
+              <Card className="animate-fade-up animation-delay-150 gap-0 border-border/80 bg-background/60 py-0">
+                <CardHeader className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <CardTitle className="text-base">VPS metrics</CardTitle>
+                    <CardDescription>
+                      {isLoadingVpsStatus
+                        ? "Loading real-time server usage..."
+                        : vpsStatus
+                          ? `Updated ${formatTimestamp(vpsStatus.timestamp)} - ${vpsStatus.hostname}`
+                          : "Metrics endpoint not available"}
+                    </CardDescription>
+                  </div>
+
+                  {vpsStatus ? (
+                    <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                      <div className="border border-border/70 bg-muted/30 px-2 py-1.5">
+                        <p className="text-muted-foreground">CPU</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          {vpsStatus.cpu.usedPercent.toFixed(1)}%
+                        </p>
+                      </div>
+                      <div className="border border-border/70 bg-muted/30 px-2 py-1.5">
+                        <p className="text-muted-foreground">Load</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          {vpsStatus.cpu.loadAverage1m.toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="border border-border/70 bg-muted/30 px-2 py-1.5">
+                        <p className="text-muted-foreground">Memory</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          {vpsStatus.memory.usedPercent.toFixed(1)}%
+                        </p>
+                      </div>
+                      <div className="border border-border/70 bg-muted/30 px-2 py-1.5">
+                        <p className="text-muted-foreground">Containers</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          {vpsStatus.containers.length}
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
+                </CardHeader>
+
+                <CardContent className="px-0 pb-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="px-6">Container</TableHead>
+                        <TableHead className="px-6">CPU</TableHead>
+                        <TableHead className="px-6">Memory</TableHead>
+                        <TableHead className="px-6">Network</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {isLoadingVpsStatus ? (
+                        <TableRow>
+                          <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
+                            Loading VPS metrics...
+                          </TableCell>
+                        </TableRow>
+                      ) : !vpsStatus ? (
+                        <TableRow>
+                          <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
+                            Could not load VPS metrics. Check `VPS_METRICS_URL` and
+                            `VPS_METRICS_TOKEN` in control-panel environment.
+                          </TableCell>
+                        </TableRow>
+                      ) : topContainers.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={4} className="px-6 py-6 text-sm text-muted-foreground">
+                            No running containers.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        topContainers.map((container) => (
+                          <TableRow key={container.id}>
+                            <TableCell className="px-6 py-3 align-top whitespace-normal">
+                              <p className="truncate font-medium text-foreground">{container.name}</p>
+                              <p className="truncate text-xs text-muted-foreground">{container.image}</p>
+                            </TableCell>
+                            <TableCell className="px-6 py-3 text-sm text-foreground">
+                              {container.cpuPercent.toFixed(1)}%
+                            </TableCell>
+                            <TableCell className="px-6 py-3 text-sm text-foreground whitespace-normal">
+                              {formatBytes(container.memory.usedBytes)}
+                              <span className="text-muted-foreground">
+                                {` / ${formatBytes(container.memory.limitBytes)} (${container.memory.usedPercent.toFixed(1)}%)`}
+                              </span>
+                            </TableCell>
+                            <TableCell className="px-6 py-3 text-xs text-muted-foreground whitespace-normal">
+                              <p>RX {formatBytes(container.network.rxBytes)}</p>
+                              <p>TX {formatBytes(container.network.txBytes)}</p>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+
+              <Card className="animate-fade-up animation-delay-200 min-h-0 flex-1 gap-0 overflow-hidden border-border/80 bg-background/60 py-0">
                 <CardContent className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-0 py-0">
                   <Table className="table-fixed">
                     <colgroup>
