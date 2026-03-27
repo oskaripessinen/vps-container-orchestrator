@@ -257,7 +257,9 @@ export function DashboardClient() {
   const [isDeletingApp, setIsDeletingApp] = useState<string | null>(null);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [dialogRepo, setDialogRepo] = useState<SourceRepo | null>(null);
+  const [pendingDeleteDeployment, setPendingDeleteDeployment] = useState<DeploymentSummary | null>(null);
   const [projectName, setProjectName] = useState("");
   const [sourceRef, setSourceRef] = useState("main");
   const [internalPort, setInternalPort] = useState("3000");
@@ -499,10 +501,6 @@ export function DashboardClient() {
   };
 
   const deleteDeployment = async (appSlug: string) => {
-    if (!window.confirm(`Delete deployment ${appSlug}? This removes the app stack from the server.`)) {
-      return;
-    }
-
     setFeedback(null);
     setIsDeletingApp(appSlug);
 
@@ -550,6 +548,11 @@ export function DashboardClient() {
     } finally {
       setIsDeletingApp(null);
     }
+  };
+
+  const openDeleteDialog = (deployment: DeploymentSummary) => {
+    setPendingDeleteDeployment(deployment);
+    setIsDeleteDialogOpen(true);
   };
 
   return (
@@ -858,7 +861,7 @@ export function DashboardClient() {
                                   size="sm"
                                   className="h-8 px-3 text-destructive hover:text-destructive"
                                   disabled={isDeletingApp === deployment.appSlug}
-                                  onClick={() => deleteDeployment(deployment.appSlug)}
+                                  onClick={() => openDeleteDialog(deployment)}
                                 >
                                   <Trash2 className="mr-1 h-3.5 w-3.5" />
                                   {isDeletingApp === deployment.appSlug ? "Deleting..." : "Delete"}
@@ -1078,6 +1081,74 @@ export function DashboardClient() {
               }}
             >
               {isImportingRepo ? "Deploying..." : "Deploy"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isDeleteDialogOpen}
+        onOpenChange={(open) => {
+          setIsDeleteDialogOpen(open);
+          if (!open && isDeletingApp === null) {
+            setPendingDeleteDeployment(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md rounded-lg border-border/80 bg-background/95 p-6">
+          <DialogHeader className="space-y-1">
+            <DialogTitle className="text-xl">Delete deployment</DialogTitle>
+            <DialogDescription>
+              This removes the app stack from the server and deletes its deployment folder.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 text-sm">
+            <div className="rounded-md border border-border/80 bg-muted/30 p-3">
+              <p className="font-medium text-foreground">{pendingDeleteDeployment?.appSlug ?? "-"}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {pendingDeleteDeployment
+                  ? `${pendingDeleteDeployment.containers.length} container${pendingDeleteDeployment.containers.length === 1 ? "" : "s"} will be removed.`
+                  : ""}
+              </p>
+            </div>
+
+            <p className="text-muted-foreground">
+              Use this only when you want to undeploy the app completely.
+            </p>
+          </div>
+
+          <DialogFooter className="mt-2 sm:justify-between">
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={isDeletingApp !== null}
+              onClick={() => {
+                setIsDeleteDialogOpen(false);
+                if (isDeletingApp === null) {
+                  setPendingDeleteDeployment(null);
+                }
+              }}
+            >
+              Cancel
+            </Button>
+
+            <Button
+              type="button"
+              variant="destructive"
+              className="min-w-28"
+              disabled={!pendingDeleteDeployment || isDeletingApp !== null}
+              onClick={() => {
+                if (!pendingDeleteDeployment) {
+                  return;
+                }
+
+                setIsDeleteDialogOpen(false);
+                void deleteDeployment(pendingDeleteDeployment.appSlug);
+                setPendingDeleteDeployment(null);
+              }}
+            >
+              {isDeletingApp ? "Deleting..." : "Delete"}
             </Button>
           </DialogFooter>
         </DialogContent>
