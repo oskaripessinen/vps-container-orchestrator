@@ -7,7 +7,8 @@ if [ "$#" -ne 1 ]; then
 fi
 
 APP_SLUG="$1"
-BASE_DIR="${DEPLOY_HUB_DIR:-$HOME/deploy-hub}"
+SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd)"
+BASE_DIR="${DEPLOY_HUB_DIR:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 APP_DIR="${BASE_DIR}/apps/${APP_SLUG}"
 
 if [ ! -f "${APP_DIR}/docker-compose.yml" ]; then

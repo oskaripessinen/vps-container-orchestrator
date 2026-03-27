@@ -21,15 +21,20 @@ This creates:
 - `apps/<app-slug>/docker-compose.yml`
 - `apps/<app-slug>/.env`
 
-## 2) Add reverse proxy route once
+If `BASE_DOMAIN` is set in `infrastructure/.env`, the script also writes:
 
-In Nginx Proxy Manager:
+- `APP_DOMAIN=<app-slug>.<base-domain>`
 
-- Domain Names: your app domain
-- Forward Hostname/IP: value of `APP_NAME` in `apps/<app-slug>/.env`
-- Forward Port: value of `APP_INTERNAL_PORT`
+## 2) Enable wildcard DNS once
 
-Enable SSL in the same UI.
+- Point `*.<your-domain>` to the VPS public IP
+- Example: `*.oskaripessinen.com` -> `56.228.56.105`
+
+Traefik then routes containers automatically from their labels.
+
+Example result:
+
+- app slug `project-a` -> `https://project-a.<base-domain>`
 
 ## 3) Add workflow to backend repository
 

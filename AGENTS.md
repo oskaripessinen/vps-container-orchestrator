@@ -10,7 +10,7 @@ Guide for coding agents working in `vps-container-orchestrator`.
 - `control-panel/` is the current app UI: a Next.js dashboard for authenticated GitHub-based deploys and VPS metrics.
 
 ## Repository map
-- `infrastructure/docker-compose.yml`: shared services (`nginx-proxy-manager`, `watchtower`, `vps-metrics-api`).
+- `infrastructure/docker-compose.yml`: shared services (`traefik`, `watchtower`, `vps-metrics-api`).
 - `infrastructure/vps-metrics-api/`: lightweight API used by `control-panel` for live host and container stats.
 - `apps/_template/`: template used when creating a new app stack.
 - `scripts/create-app.sh`: creates `apps/<app-slug>` from template and writes `.env`.
@@ -21,17 +21,17 @@ Guide for coding agents working in `vps-container-orchestrator`.
 - `templates/backend-repo/.github/workflows/deploy.yml`: backend repo workflow template for push-to-deploy.
 - `control-panel/`: Next.js 16 + React 19 + Clerk app router dashboard.
 - `docs/new-backend-flow.md`: backend onboarding flow.
-- `docs/vps-metrics-api.md`: metrics API setup and proxying.
+- `docs/vps-metrics-api.md`: metrics API setup and Traefik routing.
 
 ## Main workflows
 
 ### Shared infrastructure
 - Copy `infrastructure/.env.example` to `infrastructure/.env`.
-- Start or refresh with `docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d`.
+- Start or refresh with `docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d --remove-orphans`.
 - The shared Docker network name must stay `vps-container-orchestrator`.
 
 ### Per-app deploys
-- Create an app once with `bash scripts/create-app.sh <app-slug> <ghcr-image> <internal-port>`.
+- Create an app once with `bash scripts/create-app.sh <app-slug> <ghcr-image> <internal-port> [app-domain]`.
 - Deploy an existing app with `bash scripts/server-deploy.sh <app-slug>`.
 - UI-triggered deploys use `bash scripts/deploy-app-from-image.sh <app-slug> <ghcr-image-with-tag> <internal-port>` on the server.
 
@@ -49,7 +49,7 @@ Guide for coding agents working in `vps-container-orchestrator`.
 
 ### Bash scripts
 - `shellcheck scripts/*.sh`
-- `bash -n scripts/create-app.sh && bash -n scripts/server-deploy.sh && bash -n scripts/deploy-app-from-image.sh`
+- `bash -n scripts/create-app.sh && bash -n scripts/server-deploy.sh && bash -n scripts/deploy-app-from-image.sh && bash -n scripts/migrate-traefik.sh && bash -n scripts/upsert-env.sh`
 
 ### Docker Compose
 - Shared infra: `docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env config`

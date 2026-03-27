@@ -3,7 +3,7 @@
 A practical deploy hub for running multiple backend apps on one VPS with Docker Compose.
 
 This repo gives you:
-- one shared infrastructure stack (`nginx-proxy-manager`, `watchtower`, optional `vps-metrics-api`)
+- one shared infrastructure stack (`traefik`, `watchtower`, optional `vps-metrics-api`)
 - one folder per deployed app under `apps/<app-slug>/`
 - scripts for creating and deploying app stacks
 - optional AWS bootstrap with Terraform
@@ -24,7 +24,7 @@ There are two layers in this repo:
 Typical flow:
 - bring up shared infrastructure once
 - create a new app folder with `scripts/create-app.sh`
-- point Nginx Proxy Manager to that app
+- point wildcard DNS to the VPS once
 - deploy updates with GitHub Actions or from `control-panel`
 
 ## Repository structure
@@ -65,14 +65,23 @@ cd /home/ubuntu/deploy-hub
 
 ```bash
 cp infrastructure/.env.example infrastructure/.env
-docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d
+mkdir -p infrastructure/letsencrypt
+touch infrastructure/letsencrypt/acme.json
+chmod 600 infrastructure/letsencrypt/acme.json
+docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d --remove-orphans
 ```
 
-If you want live VPS metrics in `control-panel`, set `METRICS_API_TOKEN` in `infrastructure/.env` before starting.
+Set these values in `infrastructure/.env` before starting:
 
-### 3. Open Nginx Proxy Manager
+- `BASE_DOMAIN` (for example `oskaripessinen.com`)
+- `ACME_EMAIL` (Let's Encrypt email)
+- `METRICS_API_TOKEN` if you want live VPS metrics in `control-panel`
 
-- URL: `http://<server-ip>:81`
+### 3. Point wildcard DNS to the VPS
+
+- Add `A` record `*` -> your VPS public IP
+- Example: `*.oskaripessinen.com` -> `56.228.56.105`
+- After that, apps can use automatic subdomains like `<app-slug>.your-domain.com`
 
 ## Add a new backend app
 
@@ -88,6 +97,10 @@ Example:
 bash scripts/create-app.sh project-a ghcr.io/your-org/project-a:latest 3000
 ```
 
+If `BASE_DOMAIN` is set in `infrastructure/.env`, this app will automatically get:
+
+- `https://project-a.<base-domain>`
+
 This creates:
 - `apps/<app-slug>/docker-compose.yml`
 - `apps/<app-slug>/.env`
@@ -98,15 +111,16 @@ Run the first deploy:
 bash scripts/server-deploy.sh <app-slug>
 ```
 
-## Reverse proxy setup
+## Automatic routing with Traefik
 
-In Nginx Proxy Manager, create a Proxy Host for the app:
+Per-app Compose stacks include Traefik labels by default.
 
-- Domain Names: your app domain
-- Forward Hostname / IP: `APP_NAME` from `apps/<app-slug>/.env`
-- Forward Port: `APP_INTERNAL_PORT` from `apps/<app-slug>/.env`
+With wildcard DNS and `BASE_DOMAIN=example.com`:
 
-Then enable SSL in the NPM UI.
+- app slug `project-a` becomes `https://project-a.example.com`
+- metrics API becomes `https://metrics.example.com/api/v1/stats`
+
+No per-app reverse proxy configuration is needed.
 
 ## Deploy options
 
@@ -147,7 +161,7 @@ Start with `control-panel/README.md` if you want to use the dashboard.
 ## Shared infrastructure services
 
 `infrastructure/docker-compose.yml` currently includes:
-- `nginx-proxy-manager`
+- `traefik`
 - `watchtower`
 - `vps-metrics-api`
 
@@ -181,7 +195,8 @@ After provisioning, clone this repository to `/home/<deploy_user>/deploy-hub` on
 Start or refresh shared infrastructure:
 
 ```bash
-docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d
+docker rm -f nginx-proxy-manager >/dev/null 2>&1 || true
+docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d --remove-orphans
 ```
 
 Validate shared infrastructure Compose:
@@ -206,7 +221,7 @@ Check Bash scripts:
 
 ```bash
 shellcheck scripts/*.sh
-bash -n scripts/create-app.sh && bash -n scripts/server-deploy.sh && bash -n scripts/deploy-app-from-image.sh
+bash -n scripts/create-app.sh && bash -n scripts/server-deploy.sh && bash -n scripts/deploy-app-from-image.sh && bash -n scripts/migrate-traefik.sh && bash -n scripts/upsert-env.sh
 ```
 
 ## Extra docs

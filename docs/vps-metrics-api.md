@@ -43,15 +43,15 @@ METRICS_CACHE_MS=2000
 docker compose -f infrastructure/docker-compose.yml --env-file infrastructure/.env up -d --build
 ```
 
-## 3) Expose endpoint via Nginx Proxy Manager
+## 3) Expose endpoint via Traefik
 
-Create a new Proxy Host in NPM:
+Set `BASE_DOMAIN` and `ACME_EMAIL` in `infrastructure/.env`, then point wildcard DNS to the VPS.
 
-- Domain: `metrics.your-domain.com`
-- Forward Hostname / IP: `vps-metrics-api`
-- Forward Port: `8787`
+- Example wildcard DNS: `*.your-domain.com` -> your VPS public IP
 
-Enable SSL.
+After shared infrastructure restarts, metrics is available at:
+
+- `https://metrics.your-domain.com/api/v1/stats`
 
 ## 4) Configure control-panel
 
@@ -63,3 +63,37 @@ VPS_METRICS_TOKEN=replace-with-the-same-token
 ```
 
 `control-panel` route `GET /api/vps/status` proxies the request to `VPS_METRICS_URL`.
+
+## 5) Optional: sync metrics env from GitHub Actions
+
+If you deploy the orchestrator to EC2 with `.github/workflows/deploy-orchestrator.yml`, you can keep
+the metrics values in GitHub Actions secrets instead of editing files manually on the server.
+
+Add these repository secrets:
+
+- `BASE_DOMAIN`
+- `ACME_EMAIL`
+- `METRICS_API_TOKEN`
+- `CONTROL_PANEL_RESTART_COMMAND` (optional, but recommended)
+- `VPS_METRICS_URL` (optional override; defaults to `https://metrics.<BASE_DOMAIN>/api/v1/stats`)
+
+What the workflow does on EC2:
+
+- upserts `BASE_DOMAIN` and `ACME_EMAIL` into `infrastructure/.env`
+- upserts `METRICS_API_TOKEN` into `infrastructure/.env`
+- upserts `VPS_METRICS_URL` and `VPS_METRICS_TOKEN` into `control-panel/.env.local`
+- migrates existing app stacks to Traefik labels
+- restarts the shared infrastructure stack
+- runs `CONTROL_PANEL_RESTART_COMMAND` if you configured it
+
+Example restart command secrets:
+
+```bash
+sudo systemctl restart control-panel
+```
+
+or:
+
+```bash
+pm2 restart control-panel
+```

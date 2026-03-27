@@ -45,6 +45,10 @@ Required for VPS/container live metrics section:
 - `VPS_METRICS_URL` (for example `https://metrics.example.com/api/v1/stats`)
 - `VPS_METRICS_TOKEN` (must match `METRICS_API_TOKEN` on VPS)
 
+If shared infrastructure uses this repo's Traefik setup, the default metrics URL is usually:
+
+- `https://metrics.<BASE_DOMAIN>/api/v1/stats`
+
 Example:
 
 ```bash

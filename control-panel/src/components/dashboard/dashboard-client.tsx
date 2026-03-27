@@ -757,23 +757,23 @@ export function DashboardClient() {
           </DialogHeader>
 
           <div className="space-y-4">
-            <Card className="gap-0 border-border/80 bg-muted/30 py-0 shadow-none">
-              <CardHeader className="gap-1 pb-3">
-                <CardDescription className="text-xs font-medium tracking-[0.1em] uppercase">
-                  Source
-                </CardDescription>
-                <CardTitle className="flex items-center gap-2 text-sm font-medium">
-                  <Github className="h-4 w-4" />
-                  {dialogRepo?.fullName ?? "-"}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pb-4">
-                <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                  <GitBranch className="h-3.5 w-3.5" />
-                  {sourceRef}
-                </p>
-              </CardContent>
-            </Card>
+            <div className="space-y-2">
+              <p className="text-xs font-medium tracking-[0.1em] text-muted-foreground uppercase">
+                Source
+              </p>
+              <div className="flex min-w-0 items-start gap-2 text-sm font-medium leading-snug">
+                <Github className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="min-w-0 space-y-1">
+                  <p className="min-w-0 break-all text-foreground">
+                    {dialogRepo?.fullName ?? "-"}
+                  </p>
+                  <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <GitBranch className="h-3.5 w-3.5" />
+                    {sourceRef}
+                  </p>
+                </div>
+              </div>
+            </div>
 
             <Separator />
 
