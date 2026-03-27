@@ -109,20 +109,7 @@ jobs:
           DOCKERFILE_PATH="source-repo/Dockerfile"
 
           if [ ! -f "$DOCKERFILE_PATH" ]; then
-            mapfile -t DOCKERFILE_MATCHES < <(python3 - <<'PY'
-            import os
-
-            matches = []
-            for root, dirs, files in os.walk("source-repo"):
-                dirs[:] = [directory for directory in dirs if directory not in {".git", "node_modules"}]
-                if "Dockerfile" in files:
-                    matches.append(os.path.join(root, "Dockerfile"))
-
-            matches.sort(key=lambda path: (path.count(os.sep), path))
-
-            for path in matches:
-                print(path)
-            PY
+            mapfile -t DOCKERFILE_MATCHES < <(python3 -c $'import os\n\nmatches = []\nfor root, dirs, files in os.walk("source-repo"):\n    dirs[:] = [directory for directory in dirs if directory not in {".git", "node_modules"}]\n    if "Dockerfile" in files:\n        matches.append(os.path.join(root, "Dockerfile"))\n\nmatches.sort(key=lambda path: (path.count(os.sep), path))\n\nfor path in matches:\n    print(path)'
             )
 
             if [ "${#DOCKERFILE_MATCHES[@]}" -eq 0 ]; then
